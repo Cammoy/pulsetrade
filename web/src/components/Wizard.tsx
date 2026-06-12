@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useStore } from '../store'
-import type { BacktestResult } from '../types'
+import type { BacktestResult, RiskReport } from '../types'
 import { fmtPct, fmtUsd, DAY_NAMES } from '../format'
 import Sparkline from './Sparkline'
 import WalletButton from './WalletButton'
+import RiskReportPanel from './RiskReport'
 
 const STEPS = ['Wallet', 'Network', 'Coin', 'Strategy', 'Risk & budget', 'Schedule & launch']
 
@@ -62,6 +63,7 @@ export default function Wizard() {
   const [compare, setCompare] = useState<Record<string, BacktestResult> | null>(null)
   const [comparing, setComparing] = useState(false)
   const [finalBt, setFinalBt] = useState<BacktestResult | null>(null)
+  const [screen, setScreen] = useState<RiskReport | null>(null)
   const [launching, setLaunching] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -73,11 +75,17 @@ export default function Wizard() {
     setCompare(null)
   }, [network])
 
-  // Auto-backtest the final configuration on the review step.
+  // Auto-backtest the final configuration AND run an advisory safety screen
+  // when the review step opens.
   useEffect(() => {
     if (step !== 5 || !tok) return
     setFinalBt(null)
+    setScreen(null)
     runBacktest({ network, tokenCg: tok.cg, strategy, risk, budgetUsd: Number(budget) }).then(setFinalBt)
+    fetch(`/api/screen/${network}/${token}`)
+      .then((r) => r.json())
+      .then(setScreen)
+      .catch(() => {})
   }, [step])
 
   const canNext = useMemo(() => {
@@ -329,6 +337,17 @@ export default function Wizard() {
               </div>
 
               {finalBt ? <BacktestCard bt={finalBt} /> : <div className="text-xs text-slate-500">Running 30-day backtest of this exact configuration…</div>}
+              {screen && (
+                <div>
+                  <RiskReportPanel report={screen} compact />
+                  {!screen.tradeable && (
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+                      This is a curated, deep-liquidity token — canonical bridged assets can show mint/LP flags, so this screen is advisory
+                      here and does not block. (The Sniper applies it as a hard block on unknown tokens.)
+                    </p>
+                  )}
+                </div>
+              )}
               <p className="text-[10px] leading-relaxed text-slate-600">
                 Backtests use real historical prices with fees and slippage, but past performance never guarantees future results. Crypto is
                 volatile — trade only what you can afford to lose.

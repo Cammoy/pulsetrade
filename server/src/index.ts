@@ -6,9 +6,11 @@ import { state, save } from './store.js'
 import { NETWORKS } from './networks.js'
 import { STRATEGIES } from './strategies.js'
 import { RISK } from './risk.js'
-import { startEngine, createBot, controlBot, deleteBot, serializeBot, trimTrades } from './engine.js'
+import { startEngine, createBot, createSniper, controlBot, deleteBot, serializeBot, trimTrades } from './engine.js'
 import { backtest, profitFinder } from './backtest.js'
 import { liveReady, botWalletAddress } from './live.js'
+import { screenToken, screenAddress } from './screen-fetch.js'
+import { discoverPools } from './sniper.js'
 
 const app = express()
 app.use(cors())
@@ -36,6 +38,30 @@ app.get('/api/state', (_req, res) => {
 
 app.get('/api/pnl/monthly', (_req, res) => {
   res.json(state.monthly)
+})
+
+// ── Pre-trade risk screening ─────────────────────────────────────────────────
+app.get('/api/screen/:network/:symbol', async (req, res) => {
+  res.json(await screenToken(req.params.network, req.params.symbol))
+})
+
+app.post('/api/screen', async (req, res) => {
+  const { network, address, symbol } = req.body ?? {}
+  if (!network || !address) return res.status(400).json({ error: 'network and address required' })
+  res.json(await screenAddress(network, address, symbol))
+})
+
+// ── Sniper ───────────────────────────────────────────────────────────────────
+app.get('/api/sniper/pools', async (req, res) => {
+  const network = String(req.query.network ?? 'base')
+  const mode = req.query.mode === 'trending' ? 'trending' : 'new'
+  res.json(await discoverPools(network, mode))
+})
+
+app.post('/api/sniper', async (req, res) => {
+  const out = await createSniper(req.body ?? {})
+  if ('error' in out) return res.status(400).json(out)
+  res.json(serializeBot(out))
 })
 
 app.post('/api/profit-finder', async (req, res) => {

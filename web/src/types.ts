@@ -57,6 +57,9 @@ export interface Bot {
   cashUsd: number
   status: 'running' | 'paused' | 'stopped' | 'scheduled'
   schedule: { enabled: boolean; days: number[]; startHour: number; endHour: number }
+  pool?: { poolAddress: string; tokenAddress: string; decimals: number }
+  sniper?: { takeProfitPct: number; stopLossPct: number; maxHoldMin: number; trailingPct?: number }
+  riskReport?: RiskReport
   position: { qty: number; avgCostUsd: number; costUsd: number; openedAt: number | null }
   state: Record<string, unknown>
   stats: {
@@ -124,6 +127,45 @@ export interface FinderResult {
   days: number
   rows: FinderRow[]
   skipped: string[]
+}
+
+export interface RiskFlag {
+  id: string
+  label: string
+  detail: string
+  severity: 'info' | 'warn' | 'critical'
+}
+
+export interface RiskReport {
+  network: string
+  chainId: number
+  token: string
+  score: number
+  verdict: 'safe' | 'caution' | 'danger'
+  tradeable: boolean
+  flags: RiskFlag[]
+  positives: string[]
+  buyTaxPct: number | null
+  sellTaxPct: number | null
+  sources: string[]
+  checkedAt: number
+  error?: string
+}
+
+export interface PoolCandidate {
+  network: string
+  poolAddress: string
+  tokenAddress: string
+  tokenSymbol: string
+  tokenName: string
+  priceUsd: number | null
+  liquidityUsd: number | null
+  volume24hUsd: number | null
+  priceChange1hPct: number | null
+  fdvUsd: number | null
+  createdAt: number | null
+  ageMinutes: number | null
+  dex: string | null
 }
 
 export interface BacktestResult {

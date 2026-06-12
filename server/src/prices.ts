@@ -55,3 +55,28 @@ export async function getCandles(id: string, days = 30): Promise<{ t: number; c:
   }
   return hit?.closes ?? []
 }
+
+// ── GeckoTerminal pool pricing (for sniped tokens not on CoinGecko) ──────────
+
+const GT = 'https://api.geckoterminal.com/api/v2'
+const poolCache = new Map<string, number>() // key: `${gtSlug}:${poolAddress}` → USD price
+
+export const poolPrice = (gtSlug: string, poolAddress: string) =>
+  poolCache.get(`${gtSlug}:${poolAddress.toLowerCase()}`)
+
+/** Fetch and cache the base-token USD price for a single pool. */
+export async function refreshPoolPrice(gtSlug: string, poolAddress: string): Promise<number | undefined> {
+  try {
+    const res = await fetch(`${GT}/networks/${gtSlug}/pools/${poolAddress}`, { headers: { accept: 'application/json' } })
+    if (!res.ok) return poolPrice(gtSlug, poolAddress)
+    const data = await res.json()
+    const p = Number(data?.data?.attributes?.base_token_price_usd)
+    if (Number.isFinite(p) && p > 0) {
+      poolCache.set(`${gtSlug}:${poolAddress.toLowerCase()}`, p)
+      return p
+    }
+  } catch {
+    /* keep last known price */
+  }
+  return poolPrice(gtSlug, poolAddress)
+}

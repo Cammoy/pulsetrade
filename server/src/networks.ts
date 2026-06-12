@@ -16,6 +16,7 @@ export interface Network {
   native: { symbol: string; cg: string }
   avgGasUsd: number
   color: string
+  gt: string // GeckoTerminal network slug (new-pool discovery + pool pricing)
   tokens: Token[]
 }
 
@@ -27,6 +28,7 @@ export const NETWORKS: Network[] = [
     native: { symbol: 'ETH', cg: 'ethereum' },
     avgGasUsd: 0.02,
     color: '#0052ff',
+    gt: 'base',
     tokens: [
       { symbol: 'cbBTC', name: 'Coinbase Wrapped BTC', cg: 'coinbase-wrapped-btc', address: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf', decimals: 8 },
       { symbol: 'WETH', name: 'Wrapped Ether', cg: 'weth', address: '0x4200000000000000000000000000000000000006', decimals: 18 },
@@ -42,6 +44,7 @@ export const NETWORKS: Network[] = [
     native: { symbol: 'ETH', cg: 'ethereum' },
     avgGasUsd: 0.03,
     color: '#2d374b',
+    gt: 'arbitrum',
     tokens: [
       { symbol: 'WBTC', name: 'Wrapped Bitcoin', cg: 'wrapped-bitcoin', address: '0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f', decimals: 8 },
       { symbol: 'ARB', name: 'Arbitrum', cg: 'arbitrum', address: '0x912CE59144191C1204E64559FE8253a0e49E6548', decimals: 18 },
@@ -57,6 +60,7 @@ export const NETWORKS: Network[] = [
     native: { symbol: 'ETH', cg: 'ethereum' },
     avgGasUsd: 0.02,
     color: '#ff0420',
+    gt: 'optimism',
     tokens: [
       { symbol: 'OP', name: 'Optimism', cg: 'optimism', address: '0x4200000000000000000000000000000000000042', decimals: 18 },
       { symbol: 'WBTC', name: 'Wrapped Bitcoin', cg: 'wrapped-bitcoin', address: '0x68f180fcCe6836688e9084f035309E29Bf0A2095', decimals: 8 },
@@ -72,6 +76,7 @@ export const NETWORKS: Network[] = [
     native: { symbol: 'POL', cg: 'polygon-ecosystem-token' },
     avgGasUsd: 0.01,
     color: '#8247e5',
+    gt: 'polygon_pos',
     tokens: [
       { symbol: 'WBTC', name: 'Wrapped Bitcoin', cg: 'wrapped-bitcoin', address: '0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6', decimals: 8 },
       { symbol: 'WETH', name: 'Wrapped Ether', cg: 'weth', address: '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619', decimals: 18 },
@@ -87,6 +92,7 @@ export const NETWORKS: Network[] = [
     native: { symbol: 'BNB', cg: 'binancecoin' },
     avgGasUsd: 0.1,
     color: '#f0b90b',
+    gt: 'bsc',
     tokens: [
       { symbol: 'BTCB', name: 'Bitcoin BEP-20', cg: 'bitcoin', address: '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c', decimals: 18 },
       { symbol: 'ETH', name: 'Ethereum BEP-20', cg: 'ethereum', address: '0x2170Ed0880ac9A755fd29B2688956BD959F933F8', decimals: 18 },

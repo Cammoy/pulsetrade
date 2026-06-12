@@ -20,17 +20,35 @@ export interface BotLogEntry {
   kind: 'info' | 'buy' | 'sell' | 'warn'
 }
 
+/** Sniper bots price an off-CoinGecko token directly from its DEX pool. */
+export interface PoolRef {
+  poolAddress: string
+  tokenAddress: string
+  decimals: number
+}
+
+/** One-shot sniper configuration (instant entry, then TP/SL/time exit). */
+export interface SniperConfig {
+  takeProfitPct: number
+  stopLossPct: number
+  maxHoldMin: number
+  trailingPct?: number // optional trailing stop from peak
+}
+
 export interface Bot {
   id: string
   name: string
   network: string
-  token: string // symbol within network
+  token: string // symbol within network (or sniped token symbol)
   strategy: string
   risk: 'conservative' | 'balanced' | 'aggressive'
   budgetUsd: number
   cashUsd: number
   status: 'running' | 'paused' | 'stopped' | 'scheduled'
   schedule: { enabled: boolean; days: number[]; startHour: number; endHour: number }
+  pool?: PoolRef // present ⇒ priced from GeckoTerminal, not CoinGecko
+  sniper?: SniperConfig // present ⇒ snipe bot
+  riskReport?: unknown // safety screen captured at creation
   position: Position
   state: Record<string, any> // per-strategy scratch state
   stats: {

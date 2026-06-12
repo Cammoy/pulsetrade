@@ -9,12 +9,13 @@
 // - a manual stop sweeps ALL proceeds to native
 // - every fill updates the persistent monthly ledger (state.monthly)
 
-import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade } from './store.js'
+import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type PoolRef } from './store.js'
 import { networkById, tokenOf, allPriceIds } from './networks.js'
-import { getSpotPrices, getCandles, spot } from './prices.js'
+import { getSpotPrices, getCandles, spot, poolPrice, refreshPoolPrice } from './prices.js'
 import { strategyById, type Ctx } from './strategies.js'
 import { RISK } from './risk.js'
 import { liveReady, executeSwap } from './live.js'
+import { screenAddress } from './screen-fetch.js'
 import { parseUnits } from 'viem'
 
 const TICK_MS = 20_000
@@ -40,6 +41,16 @@ export function inSchedule(bot: Bot, d = new Date()): boolean {
 
 function month(ts: number) {
   return (state.monthly[monthKey(ts)] ??= emptyMonth())
+}
+
+/** Current USD price for a bot: DEX pool for sniped tokens, else CoinGecko. */
+function priceForBot(bot: Bot): number | undefined {
+  if (bot.pool) {
+    const net = networkById(bot.network)
+    return net ? poolPrice(net.gt, bot.pool.poolAddress) : undefined
+  }
+  const token = tokenOf(bot.network, bot.token)
+  return token ? spot(token.cg) : undefined
 }
 
 function execBuy(bot: Bot, price: number, usd: number, reason: string) {
@@ -131,15 +142,22 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
 async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: number, price: number) {
   if (state.settings.mode !== 'live' || !liveReady()) return
   const net = networkById(bot.network)!
-  const token = tokenOf(bot.network, bot.token)!
+  // Sniper bots carry their token address/decimals on bot.pool; others resolve
+  // from the curated list.
+  const tokenAddress = bot.pool?.tokenAddress ?? tokenOf(bot.network, bot.token)?.address
+  const decimals = bot.pool?.decimals ?? tokenOf(bot.network, bot.token)?.decimals
+  if (!tokenAddress || decimals === undefined) {
+    log(bot, 'LIVE EXECUTION SKIPPED: token address unknown', 'warn')
+    return
+  }
   try {
     const nativePrice = spot(net.native.cg)
     if (side === 'buy' && !nativePrice) throw new Error('no native price for sizing')
     const sellAmount =
       side === 'buy'
         ? parseUnits((usd / nativePrice!).toFixed(18), 18) // native in
-        : parseUnits(qty.toFixed(token.decimals), token.decimals)
-    const hash = await executeSwap({ chainId: net.chainId, tokenAddress: token.address, side, sellAmountBaseUnits: sellAmount })
+        : parseUnits(qty.toFixed(decimals), decimals)
+    const hash = await executeSwap({ chainId: net.chainId, tokenAddress, side, sellAmountBaseUnits: sellAmount })
     log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
   } catch (e: any) {
     log(bot, `LIVE EXECUTION FAILED (${side}): ${e.message ?? e}`, 'warn')
@@ -156,17 +174,27 @@ async function tickBot(bot: Bot) {
   }
   if (scheduled) return
 
-  const token = tokenOf(bot.network, bot.token)
   const strat = strategyById(bot.strategy)
   const params = RISK[bot.risk]
-  if (!token || !strat || !params) return
+  if (!strat || !params) return
 
-  const price = spot(token.cg)
+  const price = priceForBot(bot)
   if (!price) return
-  const candles = await getCandles(token.cg, 30)
-  if (candles.length < 30) return
-  const closes = candles.map((c) => c.c)
-  closes.push(price)
+
+  // Sniper bots are priced from their pool and need no candle history; all
+  // other strategies need 30d of hourly closes for their indicators.
+  let closes: number[]
+  if (bot.sniper) {
+    bot.state.snipe = bot.sniper // seed config for the strategy each tick
+    closes = [price]
+  } else {
+    const token = tokenOf(bot.network, bot.token)
+    if (!token) return
+    const candles = await getCandles(token.cg, 30)
+    if (candles.length < 30) return
+    closes = candles.map((c) => c.c)
+    closes.push(price)
+  }
 
   const ctx: Ctx = {
     price, closes, params,
@@ -187,6 +215,12 @@ async function tickBot(bot: Bot) {
     void mirrorLive(bot, 'sell', qty * price, qty, price)
   }
 
+  // A sniper that has fired and exited is finished — retire it cleanly.
+  if (bot.sniper && bot.state.sniped && bot.position.qty === 0) {
+    bot.status = 'stopped'
+    log(bot, 'Snipe complete — position closed, bot retired', 'info')
+  }
+
   // Equity sample roughly once a minute.
   const last = bot.equityHistory[bot.equityHistory.length - 1]
   if (!last || Date.now() - last.t > 60_000) {
@@ -197,8 +231,7 @@ async function tickBot(bot: Bot) {
 }
 
 export function serializeBot(bot: Bot) {
-  const token = tokenOf(bot.network, bot.token)
-  const price = token ? spot(token.cg) ?? 0 : 0
+  const price = priceForBot(bot) ?? 0
   const unrealizedUsd = bot.position.qty > 0 && price > 0 ? bot.position.qty * (price - bot.position.avgCostUsd) : 0
   return {
     ...bot,
@@ -215,6 +248,15 @@ async function tick() {
   ticking = true
   try {
     await getSpotPrices(allPriceIds())
+    // Refresh DEX pool prices for any active sniper bots (deduped by pool).
+    const pools = new Map<string, { gt: string; addr: string }>()
+    for (const b of state.bots) {
+      if (b.pool && (b.status === 'running' || b.status === 'scheduled')) {
+        const net = networkById(b.network)
+        if (net) pools.set(`${net.gt}:${b.pool.poolAddress}`, { gt: net.gt, addr: b.pool.poolAddress })
+      }
+    }
+    await Promise.all([...pools.values()].map((p) => refreshPoolPrice(p.gt, p.addr)))
     await Promise.all(state.bots.map((b) => tickBot(b).catch((e) => console.error(`[engine] bot ${b.name}:`, e))))
     save()
     const prices: Record<string, number> = {}
@@ -288,6 +330,69 @@ export function createBot(input: {
   return bot
 }
 
+/**
+ * Create a one-shot sniper bot for a freshly discovered pool. The token is
+ * risk-screened first and the snipe is REFUSED if the screen marks it
+ * non-tradeable (honeypot, non-sellable, rug setup, etc.) — there is no
+ * override. Pricing comes from the DEX pool, not CoinGecko.
+ */
+export async function createSniper(input: {
+  network: string
+  poolAddress: string
+  tokenAddress: string
+  tokenSymbol: string
+  tokenName?: string
+  decimals?: number
+  budgetUsd: number
+  sniper: SniperConfig
+}): Promise<(Bot & { riskReport: unknown }) | { error: string; riskReport?: unknown }> {
+  const net = networkById(input.network)
+  if (!net) return { error: 'unknown network' }
+  if (!/^0x[a-fA-F0-9]{40}$/.test(input.tokenAddress)) return { error: 'invalid token address' }
+  if (!/^0x[a-fA-F0-9]{40}$/.test(input.poolAddress)) return { error: 'invalid pool address' }
+  const budget = Number(input.budgetUsd)
+  if (!Number.isFinite(budget) || budget < 10) return { error: 'budget must be at least $10' }
+  const s = input.sniper
+  if (!(s.takeProfitPct > 0) || !(s.stopLossPct > 0) || !(s.maxHoldMin > 0))
+    return { error: 'sniper needs positive take-profit, stop-loss and max-hold' }
+
+  // MANDATORY pre-trade safety screen — blocks honeypots / non-sellable / rugs.
+  const report = await screenAddress(input.network, input.tokenAddress, input.tokenSymbol)
+  if (!report.tradeable) {
+    return {
+      error: `Snipe blocked by safety screen (${report.verdict}): ${report.flags.find((f) => f.severity === 'critical')?.label ?? 'unsafe token'}`,
+      riskReport: report,
+    }
+  }
+
+  const bot: Bot = {
+    id: uid(),
+    name: `🎯 ${input.tokenSymbol} snipe`,
+    network: net.id,
+    token: input.tokenSymbol,
+    strategy: 'sniper',
+    risk: 'aggressive',
+    budgetUsd: budget,
+    cashUsd: budget,
+    status: 'running',
+    schedule: { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 },
+    pool: { poolAddress: input.poolAddress, tokenAddress: input.tokenAddress, decimals: input.decimals ?? 18 },
+    sniper: s,
+    riskReport: report,
+    position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
+    state: {},
+    stats: { realizedUsd: 0, feesUsd: 0, wins: 0, losses: 0, nativeTakenQty: 0, nativeTakenUsd: 0 },
+    equityHistory: [],
+    log: [],
+    createdAt: Date.now(),
+    lastTickAt: 0,
+  }
+  log(bot, `Sniper armed on ${input.tokenSymbol} — $${budget}, TP +${s.takeProfitPct}% / SL −${s.stopLossPct}% / max ${s.maxHoldMin}m. Safety score ${report.score}/100.`)
+  state.bots.push(bot)
+  save()
+  return bot as Bot & { riskReport: unknown }
+}
+
 export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot | { error: string } {
   const bot = state.bots.find((b) => b.id === id)
   if (!bot) return { error: 'not found' }
@@ -299,8 +404,7 @@ export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot
     log(bot, 'Resumed by user')
   } else {
     // Stop = liquidate everything to the chain's native coin. No bags.
-    const token = tokenOf(bot.network, bot.token)
-    const price = token ? spot(token.cg) : undefined
+    const price = priceForBot(bot)
     if (bot.position.qty > 0 && price) {
       const qty = bot.position.qty
       execSell(bot, price, 1, 'Manual stop — full position swept to native', true, true)

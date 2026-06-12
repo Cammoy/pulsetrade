@@ -47,6 +47,14 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 
 ## Features
 
+- 🧭 **Guided onboarding** — a first-run tour (replayable via the `?` button) plus full in-app
+  documentation (`📖 Docs`) and a standalone [DOCS.md](DOCS.md)
+- 🎯 **Sniper** — live feed of freshly created / trending pools (GeckoTerminal); pick one, it’s
+  screened, then a one-shot snipe bot enters instantly and exits on take-profit / stop-loss /
+  trailing stop / max-hold, sweeping to native and retiring itself
+- 🛡️ **Pre-trade risk screening** — every token screened via GoPlus Security + honeypot.is for
+  honeypots, non-sellable contracts, rug-pull setups, exit traps and owner controls; scored
+  0–100 with named flags. A **hard, no-override block** for the Sniper; advisory in the wizard
 - 💡 **Profit Finder** — "here is $100": backtests every strategy × risk × coin on a network
   over identical real 30-day history, ranks by profit, one click launches the winner
 - 📒 **Monthly P&L ledger** — realized P&L, win rate, fees, native sweeps, volume and
@@ -85,14 +93,18 @@ accounting continues in parallel as the source of truth for P&L.
 npm test
 ```
 
-41 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
+67 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
 logic against deterministic price series, the paper executor's accounting (cost basis
 includes buy fees; an equity-identity test proves cash + position + native sweeps always
 equals budget + P&L), profit sweeps, stop-&-sweep, schedule windows (including overnight),
 the monthly ledger (including the legacy-state rebuild), backtester invariants on synthetic
-ranging/crashing markets, the Profit Finder ranking, input validation, and crash-safe
-persistence (atomic writes, corrupt-file fallback). No network access — market data is
-mocked at the fetch layer; the same `decide()` code paths run in tests, backtests and live.
+ranging/crashing markets, the Profit Finder ranking, **the risk-screen scoring (honeypots,
+non-sellable, rug setups, tax traps, owner controls, provider redundancy and the
+trade-blind refusal), the sniper strategy (instant entry; TP/SL/trailing/max-hold exits;
+one-shot), pool discovery mapping, and createSniper's mandatory no-override safety gate**,
+input validation, and crash-safe persistence (atomic writes, corrupt-file fallback). No
+network access — all providers are mocked at the fetch layer; the same `decide()` code
+paths run in tests, backtests and live.
 
 ## Architecture
 
@@ -100,8 +112,11 @@ mocked at the fetch layer; the same `decide()` code paths run in tests, backtest
 server/  Express + WebSocket engine (Node, tsx)
   src/engine.ts      tick loop, paper executor, profit sweep, schedules
   src/strategies.ts  the 4 strategies (shared by engine + backtester)
-  src/backtest.ts    30-day hourly backtests with fees/slippage
-  src/prices.ts      CoinGecko spot + candles, cached, 429-tolerant
+  src/backtest.ts    30-day hourly backtests with fees/slippage + Profit Finder
+  src/prices.ts      CoinGecko spot + candles + GeckoTerminal pool pricing, cached
+  src/risk-screen.ts pure 0–100 risk scorer (rug/honeypot/exploit flags)
+  src/screen-fetch.ts  GoPlus + honeypot.is fetch wrapper, cached
+  src/sniper.ts      GeckoTerminal new/trending pool discovery
   src/live.ts        0x v2 swap execution (dormant without keys)
 web/     Vite + React + Tailwind v4 + wagmi/viem + lightweight-charts
 ```

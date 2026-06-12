@@ -11,6 +11,9 @@ interface AppState {
   mode: 'paper' | 'live'
   showTrades: boolean
   finderOpen: boolean
+  sniperOpen: boolean
+  docsOpen: boolean
+  tourOpen: boolean
   wizardOpen: boolean
   selectedBotId: string | null
   lastTradeId: string | null
@@ -19,6 +22,9 @@ interface AppState {
   toggleTrades(): void
   openWizard(open: boolean): void
   openFinder(open: boolean): void
+  openSniper(open: boolean): void
+  openDocs(open: boolean): void
+  openTour(open: boolean): void
   selectBot(id: string | null): void
   createBot(payload: object): Promise<{ error?: string }>
   control(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void>
@@ -51,6 +57,9 @@ export const useStore = create<AppState>((set, get) => ({
   mode: 'paper',
   showTrades: true,
   finderOpen: false,
+  sniperOpen: false,
+  docsOpen: false,
+  tourOpen: false,
   wizardOpen: false,
   selectedBotId: null,
   lastTradeId: null,
@@ -72,6 +81,9 @@ export const useStore = create<AppState>((set, get) => ({
   toggleTrades: () => set((s) => ({ showTrades: !s.showTrades })),
   openWizard: (wizardOpen) => set({ wizardOpen }),
   openFinder: (finderOpen) => set({ finderOpen }),
+  openSniper: (sniperOpen) => set({ sniperOpen }),
+  openDocs: (docsOpen) => set({ docsOpen }),
+  openTour: (tourOpen) => set({ tourOpen }),
   selectBot: (selectedBotId) => set({ selectedBotId }),
 
   async createBot(payload) {

@@ -6,18 +6,24 @@ import BotCard from './components/BotCard'
 import TradeList from './components/TradeList'
 import MonthlyPnl from './components/MonthlyPnl'
 import ProfitFinder from './components/ProfitFinder'
+import Sniper from './components/Sniper'
+import Docs from './components/Docs'
+import Onboarding from './components/Onboarding'
 import Wizard from './components/Wizard'
 import BotDetail from './components/BotDetail'
 import ErrorBoundary from './components/ErrorBoundary'
 
 function Main() {
-  const { init, bots, wizardOpen, finderOpen, openWizard, selectedBotId } = useStore()
+  const { init, bots, wizardOpen, finderOpen, sniperOpen, docsOpen, tourOpen, openWizard, openTour, selectedBotId } = useStore()
   const [ready, setReady] = useState(false)
   const [bootErr, setBootErr] = useState(false)
 
   useEffect(() => {
     init()
-      .then(() => setReady(true))
+      .then(() => {
+        setReady(true)
+        if (!localStorage.getItem('pulsetrade.onboarded')) openTour(true)
+      })
       .catch(() => setBootErr(true))
   }, [])
 
@@ -52,9 +58,14 @@ function Main() {
                 tolerance — the engine handles entries, exits and profit-taking around the clock.
               </p>
             </div>
-            <button className="btn-primary !px-6 !py-3 text-base" onClick={() => openWizard(true)}>
-              🚀 Create your first bot
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button className="btn-primary !px-6 !py-3 text-base" onClick={() => openWizard(true)}>
+                🚀 Create your first bot
+              </button>
+              <button className="btn-ghost !px-5 !py-3 text-base" onClick={() => useStore.getState().openFinder(true)}>
+                💡 Find max profit for $100
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -84,6 +95,9 @@ function Main() {
 
       {wizardOpen && <Wizard />}
       {finderOpen && <ProfitFinder />}
+      {sniperOpen && <Sniper />}
+      {docsOpen && <Docs />}
+      {tourOpen && <Onboarding />}
       {selectedBotId && <BotDetail />}
     </div>
   )

@@ -1,7 +1,8 @@
 import { useStore } from '../store'
-import type { Bot } from '../types'
+import type { Bot, RiskReport } from '../types'
 import { fmtSign, fmtUsd, fmtPrice, pnlColor, timeAgo } from '../format'
 import Sparkline from './Sparkline'
+import { RiskBadge } from './RiskReport'
 
 const STATUS: Record<Bot['status'], { label: string; cls: string; dot: string }> = {
   running: { label: 'Running', cls: 'text-emerald-300 bg-emerald-500/10', dot: 'bg-emerald-400 pulse-dot' },
@@ -37,8 +38,9 @@ export default function BotCard({ bot }: { bot: Bot }) {
             <div className="text-sm font-semibold text-white">{bot.name}</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
               <span className="chip bg-white/[0.06] text-slate-300">{net?.name}</span>
-              <span className="chip bg-white/[0.06] text-slate-300">{strat?.name}</span>
-              <span className={`chip capitalize ${RISK_CLS[bot.risk]}`}>{bot.risk}</span>
+              <span className="chip bg-white/[0.06] text-slate-300">{bot.sniper ? '🎯 Sniper' : strat?.name}</span>
+              {!bot.sniper && <span className={`chip capitalize ${RISK_CLS[bot.risk]}`}>{bot.risk}</span>}
+              {bot.sniper && bot.riskReport && <RiskBadge report={bot.riskReport as RiskReport} />}
             </div>
           </div>
         </div>

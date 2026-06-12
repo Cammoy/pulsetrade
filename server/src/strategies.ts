@@ -174,5 +174,48 @@ const dca: Strategy = {
   },
 }
 
+// Sniper: a one-shot strategy. Buys the full budget on the first tick, then
+// exits on take-profit, stop-loss, an optional trailing stop, or a hard
+// max-hold timeout — whichever fires first. Config comes from ctx.state.snipe
+// (takeProfitPct, stopLossPct, maxHoldMin, trailingPct) which the engine seeds
+// from the bot's SniperConfig. Not offered in the normal wizard/backtester.
+const sniper: Strategy = {
+  id: 'sniper',
+  name: 'Sniper',
+  tagline: 'Instant entry, fast exit',
+  description:
+    'Enters a freshly launched token immediately, then exits the entire position on the first of: take-profit, stop-loss, trailing stop, or max hold time. Proceeds are swept to the native coin.',
+  decide(ctx) {
+    const cfg = ctx.state.snipe
+    if (!cfg) return null
+
+    if (ctx.position.qty <= 0) {
+      if (ctx.state.sniped) return null // already fired and exited — one-shot
+      if (ctx.cashUsd <= 1) return null
+      ctx.state.entryAt = ctx.now
+      ctx.state.peak = ctx.price
+      return { type: 'buy', usd: ctx.cashUsd, reason: 'Sniper entry — full position on launch' }
+    }
+
+    ctx.state.peak = Math.max(ctx.state.peak ?? ctx.price, ctx.price)
+    const chg = pctFrom(ctx.price, ctx.position.avgCostUsd)
+    const heldMin = (ctx.now - (ctx.state.entryAt ?? ctx.now)) / 60_000
+
+    const done = (reason: string): Action => {
+      ctx.state.sniped = true
+      return { type: 'sell', fraction: 1, reason, exit: true }
+    }
+    if (chg >= cfg.takeProfitPct) return done(`Take-profit +${chg.toFixed(1)}%`)
+    if (chg <= -cfg.stopLossPct) return done(`Stop-loss ${chg.toFixed(1)}%`)
+    if (cfg.trailingPct) {
+      const fromPeak = pctFrom(ctx.price, ctx.state.peak)
+      if (fromPeak <= -cfg.trailingPct && chg > 0) return done(`Trailing stop ${fromPeak.toFixed(1)}% off peak (locking +${chg.toFixed(1)}%)`)
+    }
+    if (heldMin >= cfg.maxHoldMin) return done(`Max hold ${cfg.maxHoldMin}m reached (${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%)`)
+    return null
+  },
+}
+
 export const STRATEGIES: Strategy[] = [grid, meanrev, momentum, dca]
-export const strategyById = (id: string) => STRATEGIES.find((s) => s.id === id)
+export const ALL_STRATEGIES: Strategy[] = [...STRATEGIES, sniper]
+export const strategyById = (id: string) => ALL_STRATEGIES.find((s) => s.id === id)
