@@ -178,6 +178,25 @@ test('monthly ledger survives bot deletion (trades do not)', () => {
   assert.equal(state.monthly[monthKey(Date.now())].realizedUsd, after, 'ledger intact')
 })
 
+test('market bots: any CoinGecko coin trades in paper, sweeping to USDT', () => {
+  const bot = createBot({ network: 'market', token: 'moon', cg: 'some-moon-coin', strategy: 'meanrev', risk: 'balanced', budgetUsd: 500 })
+  assert.ok(!('error' in bot), (bot as any).error)
+  const b = bot as any
+  assert.equal(b.network, 'market')
+  assert.equal(b.token, 'MOON', 'symbol upper-cased')
+  assert.equal(b.cg, 'some-moon-coin')
+  // accounting works through the market pseudo-network (native = USDT)
+  execBuy(b, 10, 200, 'in')
+  execSell(b, 12, 1, 'out', true)
+  assert.equal(state.trades.at(-1)!.sweptNative!.symbol, 'USDT', 'market profits land in USDT')
+  assert.ok(b.stats.realizedUsd > 0)
+})
+
+test('market bots validate their CoinGecko id', () => {
+  assert.ok('error' in createBot({ network: 'market', token: 'X', cg: 'NOT VALID!!', strategy: 'grid', risk: 'balanced', budgetUsd: 100 }))
+  assert.ok('error' in createBot({ network: 'market', token: '', cg: 'bitcoin', strategy: 'grid', risk: 'balanced', budgetUsd: 100 }))
+})
+
 test('createBot validation rejects bad input', () => {
   assert.ok('error' in createBot({ network: 'nope', token: 'LINK', strategy: 'grid', risk: 'balanced', budgetUsd: 100 }))
   assert.ok('error' in createBot({ network: 'base', token: 'NOPE', strategy: 'grid', risk: 'balanced', budgetUsd: 100 }))

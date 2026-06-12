@@ -17,7 +17,7 @@ const SCOPES = [
 type Scope = (typeof SCOPES)[number]['id']
 
 export default function ProfitFinder() {
-  const { meta, openFinder, createBot, refresh } = useStore()
+  const { meta, openFinder, createBot, refresh, selectBot } = useStore()
   const [budget, setBudget] = useState('100')
   const [network, setNetwork] = useState('base')
   const [scope, setScope] = useState<Scope>('curated')
@@ -52,10 +52,11 @@ export default function ProfitFinder() {
     const key = `${row.token}/${row.strategy}/${row.risk}`
     setLaunching(key)
     setErr(null)
-    if (row.launch.kind === 'bot') {
+    if (row.launch.kind === 'bot' || row.launch.kind === 'market') {
       const out = await createBot({
-        network: row.launch.network,
+        network: row.launch.kind === 'bot' ? row.launch.network : 'market',
         token: row.launch.token,
+        ...(row.launch.kind === 'market' ? { cg: row.launch.cg, name: `${row.launch.token} ${row.strategyName} · market` } : {}),
         strategy: row.strategy,
         risk: row.risk,
         budgetUsd: Number(budget),
@@ -63,6 +64,7 @@ export default function ProfitFinder() {
       setLaunching(null)
       if (out.error) return setErr(out.error)
       openFinder(false)
+      if (out.id) selectBot(out.id) // open the new bot immediately
     } else {
       // Trending row → arm a screened snipe with sensible defaults.
       try {
@@ -84,6 +86,7 @@ export default function ProfitFinder() {
         if (data.error) return setErr(data.error)
         await refresh()
         openFinder(false)
+        if (data.id) selectBot(data.id) // open the new snipe immediately
       } catch {
         setLaunching(null)
         setErr('Engine unreachable')
@@ -134,6 +137,7 @@ export default function ProfitFinder() {
               <span className="mb-1 block text-xs font-medium text-slate-400">Network</span>
               <select className="input !w-40" value={network} onChange={(e) => setNetwork(e.target.value)}>
                 {meta.networks
+                  .filter((n) => n.tokens.length > 0)
                   .filter((n) => scope !== 'trending' || n.evm !== false)
                   .map((n) => (
                     <option key={n.id} value={n.id}>{n.name}</option>
@@ -203,13 +207,16 @@ export default function ProfitFinder() {
                         <td className="px-2.5 py-1.5 text-slate-400">{row.trades}</td>
                         <td className="px-2.5 py-1.5">
                           {row.launch ? (
-                            <button className="btn-ghost !px-2 !py-1 text-[11px]" disabled={launching !== null} onClick={() => launch(row)}>
-                              {launching === key ? '…' : row.launch.kind === 'snipe' ? '🎯 Snipe' : '🚀 Launch'}
+                            <button
+                              className="btn-ghost !px-2 !py-1 text-[11px]"
+                              disabled={launching !== null}
+                              title={row.launch.kind === 'market' ? 'Trades in paper, priced live from the market (no on-chain contract needed)' : undefined}
+                              onClick={() => launch(row)}
+                            >
+                              {launching === key ? '…' : row.launch.kind === 'snipe' ? '🎯 Snipe' : row.launch.kind === 'market' ? '📈 Trade' : '🚀 Launch'}
                             </button>
                           ) : (
-                            <span className="text-[10px] text-slate-600" title="This coin is not in the curated tradable lists yet — shown for insight only">
-                              watch only
-                            </span>
+                            <span className="text-[10px] text-slate-600">—</span>
                           )}
                         </td>
                       </tr>

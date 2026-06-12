@@ -77,7 +77,7 @@ test('top100 scope: ranks movers, excludes stables/wrapped, maps launchability',
   const link = out.rows.find((r: any) => r.token === 'LINK')
   assert.deepEqual(link.launch, { kind: 'bot', network: 'base', token: 'LINK' }, 'curated coin is launchable on its home network')
   const moon = out.rows.find((r: any) => r.token === 'MOON')
-  assert.equal(moon.launch, null, 'unknown coin is watch-only')
+  assert.deepEqual(moon.launch, { kind: 'market', cg: 'some-moon-coin', token: 'MOON', tokenName: 'MoonCoin' }, 'non-curated coin is immediately tradable as a paper market bot')
   assert.equal(moon.change24hPct, 25)
 })
 

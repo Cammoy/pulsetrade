@@ -154,7 +154,7 @@ export default function Wizard() {
             <div>
               <h2 className="mb-3 text-lg font-bold text-white">Pick a network</h2>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {meta.networks.map((n) => (
+                {meta.networks.filter((n) => n.tokens.length > 0).map((n) => (
                   <button
                     key={n.id}
                     onClick={() => setNetwork(n.id)}

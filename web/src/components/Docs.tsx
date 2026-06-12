@@ -65,7 +65,7 @@ const SECTIONS: Section[] = [
         <H>Three scopes</H>
         <ul className="mb-3 ml-4 list-disc space-y-1.5">
           <LI><B>Curated</B> — every coin on one network.</LI>
-          <LI><B>Top-100 movers</B> — the strongest 24h gainers among the top-100 coins by market cap. Curated ones launch in one click (e.g. JUP on its Solana home); the rest are shown <B>watch-only</B> for insight.</LI>
+          <LI><B>Top-100 movers</B> — the strongest 24h gainers among the top-100 coins by market cap. Curated ones launch on their live-capable home network; every other candidate launches instantly as a <B>paper market bot</B> priced live from the market — one click, trading immediately.</LI>
           <LI><B>Trending (safe)</B> — trending pools that pass the full safety screen, backtested on their real pool candles and launchable as screened snipes.</LI>
         </ul>
         <P>The top result is your best historical configuration for that stake. Results are evidence, not a guarantee — past performance never assures future returns. The top-100 scan is paced for the free data tier, so it can take a minute or two.</P>

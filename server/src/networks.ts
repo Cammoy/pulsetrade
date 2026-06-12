@@ -150,6 +150,22 @@ export const NETWORKS: Network[] = [
   },
 ]
 
+// Pseudo-network for "market" bots: any CoinGecko-priced coin (e.g. a Profit
+// Finder top-100 candidate) traded in paper without a curated contract.
+// Sweeps land in USDT. Not listed in network pickers (tokens is empty).
+NETWORKS.push({
+  id: 'market',
+  name: 'Market (paper)',
+  chainId: 0,
+  evm: false,
+  native: { symbol: 'USDT', cg: 'tether' },
+  usdt: { symbol: 'USDT', cg: 'tether', address: '', decimals: 6 },
+  avgGasUsd: 0.02,
+  color: '#64748b',
+  gt: '',
+  tokens: [],
+})
+
 export const networkById = (id: string) => NETWORKS.find((n) => n.id === id)
 
 export function tokenOf(networkId: string, symbol: string): Token | undefined {

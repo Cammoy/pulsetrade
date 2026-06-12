@@ -148,8 +148,12 @@ export interface FinderRow {
   trades: number
   feesUsd: number
   change24hPct?: number | null
-  /** How to act on this row: a normal bot, a one-shot snipe, or watch-only. */
-  launch?: { kind: 'bot'; network: string; token: string } | { kind: 'snipe'; network: string; token: string; poolAddress: string; tokenAddress: string } | null
+  /** How to act on this row: a curated bot, a paper market bot, or a screened snipe. */
+  launch?:
+    | { kind: 'bot'; network: string; token: string }
+    | { kind: 'market'; cg: string; token: string; tokenName: string }
+    | { kind: 'snipe'; network: string; token: string; poolAddress: string; tokenAddress: string }
+    | null
 }
 
 export interface FinderResult {
@@ -299,7 +303,9 @@ async function top100Finder(budget: number): Promise<FinderResult | { error: str
           trades: r.trades,
           feesUsd: r.feesUsd,
           change24hPct: m.price_change_percentage_24h != null ? +Number(m.price_change_percentage_24h).toFixed(2) : null,
-          launch: home ? { kind: 'bot', ...home } : null, // null ⇒ watch-only
+          // Curated coins launch on their home network (live-capable); the rest
+          // launch as paper "market" bots priced straight from CoinGecko.
+          launch: home ? { kind: 'bot', ...home } : { kind: 'market', cg: m.id, token: symbol, tokenName: m.name ?? symbol },
         })
       }
     }

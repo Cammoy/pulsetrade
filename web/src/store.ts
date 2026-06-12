@@ -35,7 +35,7 @@ interface AppState {
   openAi(open: boolean): void
   openTournament(open: boolean): void
   selectBot(id: string | null): void
-  createBot(payload: object): Promise<{ error?: string }>
+  createBot(payload: object): Promise<{ error?: string; id?: string }>
   control(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void>
   remove(id: string): Promise<void>
   setMode(mode: 'paper' | 'live'): Promise<{ error?: string }>
@@ -108,7 +108,7 @@ export const useStore = create<AppState>((set, get) => ({
     const out = await jpost<Bot & { error?: string }>('/api/bots', payload)
     if (out.error) return { error: out.error }
     await get().refresh()
-    return {}
+    return { id: out.id }
   },
 
   async control(id, action) {

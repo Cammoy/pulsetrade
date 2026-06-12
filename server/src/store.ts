@@ -62,6 +62,7 @@ export interface Bot {
   copy?: CopyConfig // present ⇒ copy-trades a tracked wallet
   ai?: boolean // present ⇒ AI-driven strategy
   followId?: string // spawned by an auto-follow of a smart-money wallet
+  cg?: string // present ⇒ "market" bot priced directly from this CoinGecko id
   sweepTo?: SweepTarget // where profits / stop-sweeps land (default 'native')
   riskReport?: unknown // safety screen captured at creation
   position: Position

@@ -89,7 +89,8 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
   0–100 with named flags. A **hard, no-override block** for the Sniper; advisory in the wizard
 - 💡 **Profit Finder** — "here is $100" with three scopes: **Curated** (every strategy × risk ×
   coin on a network), **Top-100 movers** (the strongest 24h gainers of the top-100 by market
-  cap — curated ones launch with one click, the rest are watch-only), and **Trending (safe)**
+  cap — every candidate launches in one click: curated coins on their home network, the rest
+  as paper market bots priced live from CoinGecko), and **Trending (safe)**
   (trending pools that pass the full safety screen, backtested on their real pool candles and
   launchable as screened snipes)
 - 📒 **Monthly P&L ledger** — realized P&L, win rate, fees, native sweeps, volume and

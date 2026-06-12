@@ -163,6 +163,7 @@ export interface Bot {
   copy?: { walletAddress: string; walletLabel: string }
   ai?: boolean
   tournamentId?: string
+  cg?: string
   sweepTo?: 'native' | 'usdt'
   riskReport?: RiskReport
   position: { qty: number; avgCostUsd: number; costUsd: number; openedAt: number | null }
@@ -228,6 +229,7 @@ export interface FinderRow {
   change24hPct?: number | null
   launch?:
     | { kind: 'bot'; network: string; token: string }
+    | { kind: 'market'; cg: string; token: string; tokenName: string }
     | { kind: 'snipe'; network: string; token: string; poolAddress: string; tokenAddress: string }
     | null
 }

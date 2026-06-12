@@ -52,7 +52,7 @@ export default function AiBot() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="block"><span className="mb-1 block text-xs text-slate-400">Network</span>
             <select className="input" value={network} onChange={(e) => { setNetwork(e.target.value); setToken('') }}>
-              {meta.networks.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+              {meta.networks.filter((n) => n.tokens.length > 0).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
             </select>
           </label>
           <label className="block"><span className="mb-1 block text-xs text-slate-400">Coin</span>

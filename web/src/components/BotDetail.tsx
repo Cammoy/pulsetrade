@@ -12,15 +12,17 @@ export default function BotDetail() {
   const token = net?.tokens.find((t) => t.symbol === bot?.token)
   const risk = bot && meta?.risk[bot.risk]
   const strat = meta?.strategies.find((s) => s.id === bot?.strategy)
+  // Market bots carry their CoinGecko id directly; curated bots resolve it.
+  const chartCg = bot?.cg ?? token?.cg
 
   useEffect(() => {
-    if (!token) return
+    if (!chartCg) return
     setCandles([])
-    fetch(`/api/candles/${token.cg}?days=7`)
+    fetch(`/api/candles/${chartCg}?days=7`)
       .then((r) => r.json())
       .then(setCandles)
       .catch(() => {})
-  }, [token?.cg])
+  }, [chartCg])
 
   if (!bot) return null
   const botTrades = trades.filter((t) => t.botId === bot.id)

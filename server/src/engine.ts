@@ -53,6 +53,7 @@ function priceForBot(bot: Bot): number | undefined {
     const net = networkById(bot.network)
     return net ? poolPrice(net.gt, bot.pool.poolAddress) : undefined
   }
+  if (bot.cg) return spot(bot.cg) // market bots price straight from CoinGecko
   const token = tokenOf(bot.network, bot.token)
   return token ? spot(token.cg) : undefined
 }
@@ -154,6 +155,10 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
 async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: number, price: number) {
   if (state.settings.mode !== 'live') return
   const net = networkById(bot.network)!
+  if (net.id === 'market') {
+    log(bot, 'Market-scope bots are paper-only — no on-chain execution', 'info')
+    return
+  }
   // Sniper bots carry their token address/decimals on bot.pool; others resolve
   // from the curated list.
   const tokenAddress = bot.pool?.tokenAddress ?? tokenOf(bot.network, bot.token)?.address
@@ -200,8 +205,10 @@ async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: numb
               amountBaseUnits: baseUnitsForQty(qty, decimals),
             })
       log(bot, `On-chain ${side} confirmed (Jupiter): ${sig.slice(0, 18)}…`, 'info')
-    } else {
+    } else if (net.id === 'icp') {
       log(bot, 'LIVE EXECUTION PENDING: ICP DEXes (KongSwap/ICPSwap) are canister-only — live executor not yet integrated; this trade stayed paper', 'warn')
+    } else {
+      log(bot, 'Market-scope bots are paper-only — no on-chain execution', 'info')
     }
   } catch (e: any) {
     log(bot, `LIVE EXECUTION FAILED (${side}): ${e.message ?? e}`, 'warn')
@@ -232,9 +239,9 @@ async function tickBot(bot: Bot) {
     bot.state.snipe = bot.sniper // seed config for the strategy each tick
     closes = [price]
   } else {
-    const token = tokenOf(bot.network, bot.token)
-    if (!token) return
-    const candles = await getCandles(token.cg, 30)
+    const cg = bot.cg ?? tokenOf(bot.network, bot.token)?.cg
+    if (!cg) return
+    const candles = await getCandles(cg, 30)
     if (candles.length < 30) return
     closes = candles.map((c) => c.c)
     closes.push(price)
@@ -303,7 +310,10 @@ async function tick() {
   if (ticking) return // never overlap ticks
   ticking = true
   try {
-    await getSpotPrices(allPriceIds())
+    // Static universe + any CoinGecko ids carried by market bots.
+    const priceIds = new Set(allPriceIds())
+    for (const b of state.bots) if (b.cg && b.status !== 'stopped') priceIds.add(b.cg)
+    await getSpotPrices([...priceIds])
     // Refresh DEX pool prices for any active sniper bots (deduped by pool).
     const pools = new Map<string, { gt: string; addr: string }>()
     for (const b of state.bots) {
@@ -371,11 +381,15 @@ export function createBot(input: {
   ai?: boolean
   tournamentId?: string
   followId?: string
+  cg?: string // ⇒ "market" bot: any CoinGecko coin, paper-traded
   sweepTo?: Bot['sweepTo']
 }): Bot | { error: string } {
-  const net = networkById(input.network)
-  const token = net && tokenOf(input.network, input.token)
+  const isMarket = Boolean(input.cg)
+  const net = networkById(isMarket ? 'market' : input.network)
+  const token = net && (isMarket ? { symbol: String(input.token || '').toUpperCase() } : tokenOf(input.network, input.token))
   if (!net || !token) return { error: 'unknown network/token' }
+  if (isMarket && (!token.symbol || !/^[a-z0-9-]{2,80}$/.test(String(input.cg))))
+    return { error: 'market bots need a token symbol and a valid CoinGecko id' }
   if (!strategyById(input.strategy)) return { error: 'unknown strategy' }
   if (!RISK[input.risk]) return { error: 'unknown risk tier' }
   if (input.sweepTo !== undefined && input.sweepTo !== 'native' && input.sweepTo !== 'usdt')
@@ -405,6 +419,7 @@ export function createBot(input: {
     ai: input.ai || undefined,
     tournamentId: input.tournamentId,
     followId: input.followId,
+    cg: input.cg || undefined,
     sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
