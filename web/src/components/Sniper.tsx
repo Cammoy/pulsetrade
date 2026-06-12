@@ -157,7 +157,9 @@ export default function Sniper() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className="truncate text-sm font-semibold text-white">{p.tokenSymbol}</span>
-                          <span className="chip bg-emerald-500/15 text-emerald-300">🛡️ {p.report.score}</span>
+                          <span className={`chip ${p.report.verdict === 'safe' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                            {p.report.verdict === 'safe' ? '🛡️' : '⚠️'} {p.report.score}
+                          </span>
                         </div>
                         <div className="truncate text-[11px] text-slate-500">{p.tokenName}</div>
                       </div>

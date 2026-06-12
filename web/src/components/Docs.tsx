@@ -20,9 +20,9 @@ const SECTIONS: Section[] = [
     title: 'Getting started',
     body: (
       <>
-        <P>PulseTrade runs automated trading bots on five low-fee networks. Bots place buys and sells for you continuously and take profit in each chain’s <B>native coin</B> (ETH, BNB or POL) — or in <B>USDT</B> if you prefer dollars: every bot has an “auto-sell profits to” setting. Either way you never end up stuck holding an illiquid token.</P>
+        <P>PulseTrade runs automated trading bots on seven networks — five low-fee EVM chains (Base, Arbitrum, Optimism, Polygon, BNB) plus Solana and the Internet Computer. Bots place buys and sells for you continuously and take profit in each chain’s <B>native coin</B> — or in <B>USDT</B> if you prefer dollars: every bot has an “auto-sell profits to” setting. Either way you never end up stuck holding an illiquid token.</P>
         <H>Paper vs Live</H>
-        <P><B>Paper mode</B> (the default) trades with real, live market prices but simulated money — the honest way to prove a setup before risking funds. <B>Live mode</B> executes real on-chain swaps and only activates when a dedicated bot wallet key and a 0x API key are configured on the server.</P>
+        <P><B>Paper mode</B> (the default) trades with real, live market prices but simulated money — the honest way to prove a setup before risking funds. <B>Live mode</B> executes real on-chain swaps once per-chain keys are configured (0x for EVM chains, Jupiter for Solana — see “Going live”).</P>
         <P>Every fill — paper or live — is recorded with fees and slippage, and your realized P&L is persisted to a monthly ledger that survives restarts and bot deletion.</P>
       </>
     ),

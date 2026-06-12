@@ -5,32 +5,37 @@ const STEPS = [
   {
     icon: '⚡',
     title: 'Welcome to PulseTrade',
-    body: 'Automated crypto trading bots on the 5 cheapest networks. Bots buy and sell for you around the clock and take profit in the chain’s native coin (ETH / BNB / POL) — so you’re never left holding a token you can’t sell.',
+    body: 'Automated crypto trading bots on 7 networks — five cheap EVM chains plus Solana and the Internet Computer. Bots buy and sell around the clock and take profit in the chain’s native coin or in USDT — your choice — so you’re never left holding a token you can’t sell.',
   },
   {
     icon: '📝',
     title: 'Start in Paper mode',
-    body: 'You’re in Paper mode: bots trade with real live prices but simulated money. Prove a strategy is profitable here before risking a cent. Switch to Live (and add a dedicated wallet key) only when you’re ready.',
+    body: 'You’re in Paper mode: bots trade with real live prices but simulated money. Prove a strategy is profitable here before risking a cent. Live mode (per-chain wallet keys) executes real swaps via 0x on EVM chains and Jupiter on Solana.',
   },
   {
-    icon: '🤖',
+    icon: '🧙',
     title: 'Launch a bot in under a minute',
-    body: 'Click “New Bot” for the guided wizard: pick a network, a coin, a proven strategy (Grid, RSI Mean-Reversion, EMA Momentum or Smart DCA) and a risk tolerance. You can run several bots on the same coin at different tolerances and compare their P&L.',
+    body: 'Click “New Bot” for the guided wizard: pick a network, a coin, a proven strategy (Grid, RSI Mean-Reversion, EMA Momentum or Smart DCA) and a risk tolerance. Run several bots on the same coin at different tolerances and compare their P&L side by side.',
   },
   {
     icon: '💡',
     title: 'Not sure what to trade?',
-    body: 'Profit Finder backtests every strategy × risk × coin for a stake you choose and ranks them by profit — then launches the winner in one click. “Here’s $100, show me the max profit.”',
+    body: 'Profit Finder backtests strategies across three scopes — your network’s curated coins, the top-100 market movers, or safety-screened trending pools — and ranks them by profit. One click launches any candidate and opens the bot immediately, already trading.',
+  },
+  {
+    icon: '🐋',
+    title: 'Trade with the smart money',
+    body: 'Smart Money tracks documented whale wallets (and any you add). Browse each account’s trades and net-flow chart, copy a single position manually, or auto-follow with a budget — every buy the wallet makes spawns a mirror bot that exits when it sells.',
   },
   {
     icon: '🎯',
-    title: 'Snipe new launches — safely',
-    body: 'The Sniper surfaces freshly created pools. Every token is automatically screened for honeypots, non-sellable contracts and rug-pull setups before you can buy. Unsafe tokens are blocked outright — no override.',
+    title: 'Snipe, compete, and let AI decide',
+    body: 'The Sniper shows only verified, sellable, well-distributed new tokens (one-shot or fully automatic). Tournaments pit bots head-to-head for the best return. And the AI Trader lets Gemini call buy/sell/hold, sized by its confidence.',
   },
   {
     icon: '🛡️',
     title: 'Safety first, always',
-    body: 'Every bot has stop-losses, profits sweep to native, and the monthly P&L ledger tracks every trade. Read the full docs any time from the “Docs” button. Crypto is volatile — never trade more than you can afford to lose.',
+    body: 'Every bot has stop-losses, every snipe passes a no-override honeypot/rug screen, profits sweep to native or USDT, and the persisted monthly ledger records every trade. Full docs live behind the 📖 button. Crypto is volatile — never trade more than you can afford to lose.',
   },
 ]
 

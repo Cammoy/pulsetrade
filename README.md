@@ -2,8 +2,8 @@
 
 Visual, multi-chain crypto trading bots. Run any number of bots concurrently — the same coin
 under several risk tolerances, or many coins at once — each with its own budget, schedule and
-independently tracked P&L. Profits are automatically swept into the chain's **native currency**
-(ETH / BNB / POL), so you are never left holding an illiquid token.
+independently tracked P&L. Profits are automatically swept into the chain's **native currency** — or **USDT**
+if you prefer dollars — so you are never left holding an illiquid token.
 
 ## Quick start
 
@@ -129,7 +129,7 @@ accounting continues in parallel as the source of truth for P&L.
 npm test
 ```
 
-120 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
+133 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
 logic against deterministic price series, the paper executor's accounting (cost basis
 includes buy fees; an equity-identity test proves cash + position + native sweeps always
 equals budget + P&L), profit sweeps, stop-&-sweep, schedule windows (including overnight),

@@ -29,7 +29,7 @@ export default function MonthlyPnl() {
           <table className="w-full text-xs">
             <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
-                {['Month', 'Realized P&L', 'Win rate', 'Fees', 'Swept to native', 'Volume', 'Conservative', 'Balanced', 'Aggressive'].map((h) => (
+                {['Month', 'Realized P&L', 'Win rate', 'Fees', 'Profit swept out', 'Volume', 'Conservative', 'Balanced', 'Aggressive'].map((h) => (
                   <th key={h} className="px-3 py-2 font-medium whitespace-nowrap">{h}</th>
                 ))}
               </tr>

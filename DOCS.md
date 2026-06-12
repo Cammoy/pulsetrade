@@ -7,16 +7,19 @@ tour (the **?** button) walks new users through the highlights.
 
 ## 1. Getting started
 
-PulseTrade runs automated trading bots on five low-fee networks. Bots place
-buys and sells for you continuously and take profit in each chain's **native
-coin** (ETH, BNB or POL) — or in **USDT** if you prefer dollars (every bot has an 'auto-sell profits to' setting), so you never end up stuck holding an illiquid token.
+PulseTrade runs automated trading bots on seven networks — five low-fee EVM
+chains (Base, Arbitrum, Optimism, Polygon, BNB) plus Solana and the Internet
+Computer. Bots place buys and sells for you continuously and take profit in
+each chain's **native coin** — or in **USDT** if you prefer dollars (every bot
+has an "auto-sell profits to" setting) — so you never end up stuck holding an
+illiquid token.
 
 ### Paper vs Live
 
 - **Paper mode** (default) — trades with real, live market prices but simulated
   money. The honest way to prove a setup before risking funds.
-- **Live mode** — executes real on-chain swaps via the 0x API. Only activates
-  when a dedicated bot wallet key and a 0x API key are configured on the server.
+- **Live mode** — executes real on-chain swaps once per-chain keys are
+  configured: 0x for the EVM chains, Jupiter for Solana (see "Going live").
 
 Every fill (paper or live) is recorded with fees and slippage, and realized
 P&L is persisted to a monthly ledger that survives restarts and bot deletion.
