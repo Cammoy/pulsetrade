@@ -1,14 +1,15 @@
-// Tiny crash-safe JSON persistence — no native deps, atomic writes, debounced.
+// Tiny crash-safe JSON persistence — no native deps, atomic writes, debounced,
+// flushed on shutdown. DATA_DIR env overrides the location (used by tests).
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data')
+const DIR = process.env.DATA_DIR ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data')
 const FILE = path.join(DIR, 'state.json')
 
 export interface Position {
   qty: number
-  avgCostUsd: number
+  avgCostUsd: number // includes buy fees — cost basis, not fill price
   costUsd: number
   openedAt: number | null
 }
@@ -63,17 +64,59 @@ export interface Trade {
   mode: 'paper' | 'live'
 }
 
+/** Persistent monthly ledger — survives trade trimming and bot deletion. */
+export interface MonthlyPnl {
+  realizedUsd: number
+  feesUsd: number
+  nativeTakenUsd: number
+  volumeUsd: number
+  wins: number
+  losses: number
+  byRisk: Record<string, number> // realized P&L per risk tolerance
+}
+
 export interface State {
   bots: Bot[]
   trades: Trade[]
+  monthly: Record<string, MonthlyPnl> // key: YYYY-MM (local time)
   settings: { mode: 'paper' | 'live' }
 }
 
-const empty: State = { bots: [], trades: [], settings: { mode: 'paper' } }
+const empty: State = { bots: [], trades: [], monthly: {}, settings: { mode: 'paper' } }
+
+export function monthKey(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function emptyMonth(): MonthlyPnl {
+  return { realizedUsd: 0, feesUsd: 0, nativeTakenUsd: 0, volumeUsd: 0, wins: 0, losses: 0, byRisk: {} }
+}
+
+/** One-time rebuild for states saved before the monthly ledger existed. */
+function rebuildMonthly(s: State) {
+  const riskOf = new Map(s.bots.map((b) => [b.id, b.risk]))
+  for (const t of s.trades) {
+    const m = (s.monthly[monthKey(t.ts)] ??= emptyMonth())
+    m.volumeUsd += t.usd
+    m.feesUsd += t.feeUsd
+    if (t.side === 'sell' && t.pnlUsd !== undefined) {
+      m.realizedUsd += t.pnlUsd
+      if (t.pnlUsd >= 0) m.wins++
+      else m.losses++
+      const risk = riskOf.get(t.botId)
+      if (risk) m.byRisk[risk] = (m.byRisk[risk] ?? 0) + t.pnlUsd
+    }
+    if (t.sweptNative) m.nativeTakenUsd += t.sweptNative.usd
+  }
+}
 
 function load(): State {
   try {
-    return { ...empty, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) }
+    const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'))
+    const s: State = { ...structuredClone(empty), ...raw }
+    if (!raw.monthly && s.trades.length) rebuildMonthly(s)
+    return s
   } catch {
     return structuredClone(empty)
   }
@@ -82,19 +125,49 @@ function load(): State {
 export const state: State = load()
 
 let timer: ReturnType<typeof setTimeout> | null = null
+
+function writeSync() {
+  fs.mkdirSync(DIR, { recursive: true })
+  const tmp = FILE + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(state))
+  fs.renameSync(tmp, FILE)
+}
+
 export function save() {
   if (timer) return
   timer = setTimeout(() => {
     timer = null
     try {
-      fs.mkdirSync(DIR, { recursive: true })
-      const tmp = FILE + '.tmp'
-      fs.writeFileSync(tmp, JSON.stringify(state))
-      fs.renameSync(tmp, FILE)
+      writeSync()
     } catch (e) {
       console.error('[store] save failed', e)
     }
   }, 400)
+}
+
+/** Synchronous flush — used on shutdown and by tests. */
+export function flushNow() {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+  writeSync()
+}
+
+process.on('exit', () => {
+  try {
+    if (timer) flushNow()
+  } catch {
+    /* best effort on shutdown */
+  }
+})
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    try {
+      flushNow()
+    } catch {}
+    process.exit(0)
+  })
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36)

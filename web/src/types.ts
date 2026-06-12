@@ -94,6 +94,38 @@ export interface Trade {
   mode: 'paper' | 'live'
 }
 
+export interface MonthlyPnl {
+  realizedUsd: number
+  feesUsd: number
+  nativeTakenUsd: number
+  volumeUsd: number
+  wins: number
+  losses: number
+  byRisk: Record<string, number>
+}
+
+export interface FinderRow {
+  network: string
+  token: string
+  tokenName: string
+  strategy: string
+  strategyName: string
+  risk: string
+  returnPct: number
+  profitUsd: number
+  winRate: number | null
+  maxDrawdownPct: number
+  trades: number
+  feesUsd: number
+}
+
+export interface FinderResult {
+  budgetUsd: number
+  days: number
+  rows: FinderRow[]
+  skipped: string[]
+}
+
 export interface BacktestResult {
   days: number
   trades: number

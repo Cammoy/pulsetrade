@@ -7,7 +7,7 @@ import { NETWORKS } from './networks.js'
 import { STRATEGIES } from './strategies.js'
 import { RISK } from './risk.js'
 import { startEngine, createBot, controlBot, deleteBot, serializeBot, trimTrades } from './engine.js'
-import { backtest } from './backtest.js'
+import { backtest, profitFinder } from './backtest.js'
 import { liveReady, botWalletAddress } from './live.js'
 
 const app = express()
@@ -29,8 +29,20 @@ app.get('/api/state', (_req, res) => {
   res.json({
     bots: state.bots.map(serializeBot),
     trades: state.trades.slice(-500).reverse(),
+    monthly: state.monthly,
     mode: state.settings.mode,
   })
+})
+
+app.get('/api/pnl/monthly', (_req, res) => {
+  res.json(state.monthly)
+})
+
+app.post('/api/profit-finder', async (req, res) => {
+  const { budgetUsd, network, token } = req.body ?? {}
+  const out = await profitFinder({ budgetUsd: Number(budgetUsd), network, token })
+  if ('error' in out) return res.status(400).json(out)
+  res.json(out)
 })
 
 app.post('/api/bots', (req, res) => {

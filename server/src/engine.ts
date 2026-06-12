@@ -1,9 +1,16 @@
 // The bot engine: one tick loop drives every bot concurrently. Each bot has
 // independent cash, position, strategy state, schedule and P&L — so the same
 // coin can be traded under several risk tolerances side by side.
+//
+// Accounting model (all invariants covered by test/engine.test.ts):
+// - avgCostUsd is true cost basis INCLUDING buy fees (avg = dollars in / units held)
+// - every sell realizes pnl = net proceeds − sold cost basis, and counts a win/loss
+// - profits are swept to the chain's native coin; principal returns to working cash
+// - a manual stop sweeps ALL proceeds to native
+// - every fill updates the persistent monthly ledger (state.monthly)
 
-import { state, save, uid, type Bot, type Trade } from './store.js'
-import { NETWORKS, networkById, tokenOf, allPriceIds } from './networks.js'
+import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade } from './store.js'
+import { networkById, tokenOf, allPriceIds } from './networks.js'
 import { getSpotPrices, getCandles, spot } from './prices.js'
 import { strategyById, type Ctx } from './strategies.js'
 import { RISK } from './risk.js'
@@ -31,19 +38,28 @@ export function inSchedule(bot: Bot, d = new Date()): boolean {
     : h >= s.startHour || h < s.endHour // overnight window
 }
 
+function month(ts: number) {
+  return (state.monthly[monthKey(ts)] ??= emptyMonth())
+}
+
 function execBuy(bot: Bot, price: number, usd: number, reason: string) {
   const net = networkById(bot.network)!
   const fee = net.avgGasUsd + usd * SLIPPAGE
   const qty = (usd - fee) / price
   const p = bot.position
-  p.avgCostUsd = p.qty + qty > 0 ? (p.avgCostUsd * p.qty + price * qty) / (p.qty + qty) : price
+  // Cost basis = total dollars in (fees included) / units held.
+  p.avgCostUsd = p.qty + qty > 0 ? (p.avgCostUsd * p.qty + usd) / (p.qty + qty) : price
   p.qty += qty
   p.costUsd += usd
   if (!p.openedAt) p.openedAt = Date.now()
   bot.cashUsd -= usd
   bot.stats.feesUsd += fee
+  const ts = Date.now()
+  const m = month(ts)
+  m.volumeUsd += usd
+  m.feesUsd += fee
   const trade: Trade = {
-    id: uid(), botId: bot.id, ts: Date.now(), side: 'buy', network: bot.network,
+    id: uid(), botId: bot.id, ts, side: 'buy', network: bot.network,
     token: bot.token, qty, priceUsd: price, usd, feeUsd: fee, reason,
     mode: state.settings.mode,
   }
@@ -77,7 +93,7 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
     swept = { qty: pnl / nativePrice, symbol: net.native.symbol, usd: pnl }
     bot.cashUsd += costBasis // principal returns to working capital
   } else {
-    bot.cashUsd += proceeds // loss: whatever is left returns to cash
+    bot.cashUsd += proceeds // loss (or no native price): net proceeds back to cash
   }
   if (swept) {
     bot.stats.nativeTakenQty += swept.qty
@@ -86,16 +102,25 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
 
   bot.stats.realizedUsd += pnl
   bot.stats.feesUsd += fee
-  if (exit || p.qty === 0) {
-    if (pnl >= 0) bot.stats.wins++
-    else bot.stats.losses++
-    bot.state.lastExitAt = Date.now()
-  }
+  // Every sell closes a round trip against cost basis — count it.
+  if (pnl >= 0) bot.stats.wins++
+  else bot.stats.losses++
+  if (exit || p.qty === 0) bot.state.lastExitAt = Date.now()
+
+  const ts = Date.now()
+  const m = month(ts)
+  m.volumeUsd += gross
+  m.feesUsd += fee
+  m.realizedUsd += pnl
+  if (pnl >= 0) m.wins++
+  else m.losses++
+  m.byRisk[bot.risk] = (m.byRisk[bot.risk] ?? 0) + pnl
+  if (swept) m.nativeTakenUsd += swept.usd
 
   const trade: Trade = {
-    id: uid(), botId: bot.id, ts: Date.now(), side: 'sell', network: bot.network,
+    id: uid(), botId: bot.id, ts, side: 'sell', network: bot.network,
     token: bot.token, qty: sellQty, priceUsd: price, usd: gross, feeUsd: fee,
-    reason, pnlUsd: +pnl.toFixed(4), sweptNative: swept, mode: state.settings.mode,
+    reason, pnlUsd: +pnl.toFixed(6), sweptNative: swept, mode: state.settings.mode,
   }
   state.trades.push(trade)
   log(bot, `SELL ${sellQty.toPrecision(6)} ${bot.token} @ $${price.toLocaleString()} → P&L $${pnl.toFixed(2)}${swept ? ` (swept ${swept.qty.toPrecision(4)} ${swept.symbol})` : ''} — ${reason}`, 'sell')
@@ -108,9 +133,11 @@ async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: numb
   const net = networkById(bot.network)!
   const token = tokenOf(bot.network, bot.token)!
   try {
+    const nativePrice = spot(net.native.cg)
+    if (side === 'buy' && !nativePrice) throw new Error('no native price for sizing')
     const sellAmount =
       side === 'buy'
-        ? parseUnits((usd / (spot(net.native.cg) ?? price)).toFixed(18), 18) // native in
+        ? parseUnits((usd / nativePrice!).toFixed(18), 18) // native in
         : parseUnits(qty.toFixed(token.decimals), token.decimals)
     const hash = await executeSwap({ chainId: net.chainId, tokenAddress: token.address, side, sellAmountBaseUnits: sellAmount })
     log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
@@ -182,7 +209,10 @@ export function serializeBot(bot: Bot) {
   }
 }
 
+let ticking = false
 async function tick() {
+  if (ticking) return // never overlap ticks
+  ticking = true
   try {
     await getSpotPrices(allPriceIds())
     await Promise.all(state.bots.map((b) => tickBot(b).catch((e) => console.error(`[engine] bot ${b.name}:`, e))))
@@ -192,9 +222,11 @@ async function tick() {
       const p = spot(id)
       if (p) prices[id] = p
     }
-    broadcast({ type: 'snapshot', ts: Date.now(), bots: state.bots.map(serializeBot), prices })
+    broadcast({ type: 'snapshot', ts: Date.now(), bots: state.bots.map(serializeBot), prices, monthly: state.monthly })
   } catch (e) {
     console.error('[engine] tick failed', e)
+  } finally {
+    ticking = false
   }
 }
 
@@ -223,6 +255,13 @@ export function createBot(input: {
   if (!RISK[input.risk]) return { error: 'unknown risk tier' }
   const budget = Number(input.budgetUsd)
   if (!Number.isFinite(budget) || budget < 10) return { error: 'budget must be at least $10' }
+  const sched = input.schedule
+  if (sched?.enabled) {
+    if (!Array.isArray(sched.days) || sched.days.length === 0 || sched.days.some((d) => !Number.isInteger(d) || d < 0 || d > 6))
+      return { error: 'schedule needs at least one valid day (0–6)' }
+    if (!Number.isInteger(sched.startHour) || !Number.isInteger(sched.endHour) || sched.startHour < 0 || sched.startHour > 23 || sched.endHour < 0 || sched.endHour > 24 || sched.startHour === sched.endHour)
+      return { error: 'schedule hours invalid' }
+  }
 
   const bot: Bot = {
     id: uid(),
@@ -234,7 +273,7 @@ export function createBot(input: {
     budgetUsd: budget,
     cashUsd: budget,
     status: 'running',
-    schedule: input.schedule ?? { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 },
+    schedule: sched ?? { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 },
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
     stats: { realizedUsd: 0, feesUsd: 0, wins: 0, losses: 0, nativeTakenQty: 0, nativeTakenUsd: 0 },
@@ -266,6 +305,9 @@ export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot
       const qty = bot.position.qty
       execSell(bot, price, 1, 'Manual stop — full position swept to native', true, true)
       void mirrorLive(bot, 'sell', qty * price, qty, price)
+    } else if (bot.position.qty > 0) {
+      log(bot, 'Stop requested but no live price — position NOT liquidated; resume and retry', 'warn')
+      return bot
     }
     bot.status = 'stopped'
     log(bot, 'Stopped — all holdings in native currency')
@@ -279,7 +321,7 @@ export function deleteBot(id: string): boolean {
   if (i === -1) return false
   state.bots.splice(i, 1)
   state.trades = state.trades.filter((t) => t.botId !== id)
-  save()
+  save() // monthly ledger intentionally keeps the deleted bot's history
   return true
 }
 
@@ -287,5 +329,5 @@ export function trimTrades() {
   if (state.trades.length > 2000) state.trades.splice(0, state.trades.length - 2000)
 }
 
-/** Internal hooks for the self-test harness only. */
-export const __test = { execBuy, execSell }
+/** Internal hooks for the test suite only. */
+export const __test = { execBuy, execSell, tickBot }

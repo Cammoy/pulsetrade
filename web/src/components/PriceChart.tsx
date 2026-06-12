@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { createChart, ColorType, type IChartApi, type UTCTimestamp } from 'lightweight-charts'
 import type { Trade } from '../types'
 
-export default function PriceChart({
+function PriceChart({
   candles,
   trades,
   height = 280,
@@ -80,3 +80,12 @@ export default function PriceChart({
     return <div className="flex h-40 items-center justify-center text-xs text-slate-600">loading market data…</div>
   return <div ref={ref} className="w-full" />
 }
+
+// The parent re-renders every engine tick with fresh array identities; only
+// rebuild the chart when the data actually changed, not on every snapshot.
+export default memo(PriceChart, (a, b) => {
+  if (a.height !== b.height || a.candles !== b.candles) return false
+  const at = a.trades ?? []
+  const bt = b.trades ?? []
+  return at.length === bt.length && at[0]?.id === bt[0]?.id
+})

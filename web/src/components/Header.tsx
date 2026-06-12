@@ -2,7 +2,7 @@ import { useStore } from '../store'
 import WalletButton from './WalletButton'
 
 export default function Header() {
-  const { wsOk, mode, setMode, meta, openWizard } = useStore()
+  const { wsOk, mode, setMode, meta, openWizard, openFinder } = useStore()
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#070a12]/80 backdrop-blur-xl">
@@ -44,6 +44,9 @@ export default function Header() {
 
         <div className="ml-auto flex items-center gap-2">
           <WalletButton />
+          <button className="btn-ghost" onClick={() => openFinder(true)} title="Backtest every strategy × risk × coin for a stake and rank by profit">
+            💡 Profit Finder
+          </button>
           <button className="btn-primary" onClick={() => openWizard(true)}>
             + New Bot
           </button>

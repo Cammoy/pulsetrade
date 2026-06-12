@@ -1,14 +1,16 @@
 import { create } from 'zustand'
-import type { Bot, Meta, Trade } from './types'
+import type { Bot, Meta, MonthlyPnl, Trade } from './types'
 
 interface AppState {
   meta: Meta | null
   bots: Bot[]
   trades: Trade[]
+  monthly: Record<string, MonthlyPnl>
   prices: Record<string, number>
   wsOk: boolean
   mode: 'paper' | 'live'
   showTrades: boolean
+  finderOpen: boolean
   wizardOpen: boolean
   selectedBotId: string | null
   lastTradeId: string | null
@@ -16,6 +18,7 @@ interface AppState {
   refresh(): Promise<void>
   toggleTrades(): void
   openWizard(open: boolean): void
+  openFinder(open: boolean): void
   selectBot(id: string | null): void
   createBot(payload: object): Promise<{ error?: string }>
   control(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void>
@@ -42,10 +45,12 @@ export const useStore = create<AppState>((set, get) => ({
   meta: null,
   bots: [],
   trades: [],
+  monthly: {},
   prices: {},
   wsOk: false,
   mode: 'paper',
   showTrades: true,
+  finderOpen: false,
   wizardOpen: false,
   selectedBotId: null,
   lastTradeId: null,
@@ -53,19 +58,20 @@ export const useStore = create<AppState>((set, get) => ({
   async init() {
     const [meta, st] = await Promise.all([
       jget<Meta>('/api/meta'),
-      jget<{ bots: Bot[]; trades: Trade[]; mode: 'paper' | 'live' }>('/api/state'),
+      jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; mode: 'paper' | 'live' }>('/api/state'),
     ])
-    set({ meta, bots: st.bots, trades: st.trades, mode: st.mode })
+    set({ meta, bots: st.bots, trades: st.trades, monthly: st.monthly, mode: st.mode })
     connectWs()
   },
 
   async refresh() {
-    const st = await jget<{ bots: Bot[]; trades: Trade[]; mode: 'paper' | 'live' }>('/api/state')
-    set({ bots: st.bots, trades: st.trades, mode: st.mode })
+    const st = await jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; mode: 'paper' | 'live' }>('/api/state')
+    set({ bots: st.bots, trades: st.trades, monthly: st.monthly, mode: st.mode })
   },
 
   toggleTrades: () => set((s) => ({ showTrades: !s.showTrades })),
   openWizard: (wizardOpen) => set({ wizardOpen }),
+  openFinder: (finderOpen) => set({ finderOpen }),
   selectBot: (selectedBotId) => set({ selectedBotId }),
 
   async createBot(payload) {
@@ -99,6 +105,9 @@ export const useStore = create<AppState>((set, get) => ({
 
 let ws: WebSocket | null = null
 function connectWs() {
+  // Idempotent: React StrictMode mounts twice and reconnects can race —
+  // never hold more than one socket or trade events arrive duplicated.
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   ws = new WebSocket(`${proto}://${location.host}/ws`)
   ws.onopen = () => useStore.setState({ wsOk: true })
@@ -110,12 +119,13 @@ function connectWs() {
     try {
       const msg = JSON.parse(ev.data)
       if (msg.type === 'snapshot') {
-        useStore.setState({ bots: msg.bots, prices: msg.prices })
+        useStore.setState({ bots: msg.bots, prices: msg.prices, monthly: msg.monthly ?? {} })
       } else if (msg.type === 'trade') {
-        useStore.setState((s) => ({
-          trades: [msg.trade, ...s.trades].slice(0, 500),
-          lastTradeId: msg.trade.id,
-        }))
+        useStore.setState((s) =>
+          s.trades.some((t) => t.id === msg.trade.id)
+            ? s
+            : { trades: [msg.trade, ...s.trades].slice(0, 500), lastTradeId: msg.trade.id },
+        )
       }
     } catch {
       /* ignore malformed frames */

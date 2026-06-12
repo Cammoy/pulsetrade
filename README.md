@@ -47,6 +47,11 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 
 ## Features
 
+- 💡 **Profit Finder** — "here is $100": backtests every strategy × risk × coin on a network
+  over identical real 30-day history, ranks by profit, one click launches the winner
+- 📒 **Monthly P&L ledger** — realized P&L, win rate, fees, native sweeps, volume and
+  per-tolerance attribution per calendar month; persisted independently of trade history,
+  so it survives trade trimming and bot deletion
 - 🧙 Setup wizard: wallet → network → coin → strategy (with one-click "backtest all") → risk &
   budget → trading hours → review with auto-backtest of the exact configuration
 - ⏰ Schedules: 24/7 or specific days + hour windows (overnight windows supported); bots sleep
@@ -73,6 +78,21 @@ accounting continues in parallel as the source of truth for P&L.
   Grid and mean-reversion suit ranging markets; momentum suits trends; DCA suits accumulation.
 - Backtests include fees and slippage but not liquidity depth or MEV. Paper-trade first, size
   small, and never trade money you can't afford to lose.
+
+## Testing
+
+```bash
+npm test
+```
+
+41 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
+logic against deterministic price series, the paper executor's accounting (cost basis
+includes buy fees; an equity-identity test proves cash + position + native sweeps always
+equals budget + P&L), profit sweeps, stop-&-sweep, schedule windows (including overnight),
+the monthly ledger (including the legacy-state rebuild), backtester invariants on synthetic
+ranging/crashing markets, the Profit Finder ranking, input validation, and crash-safe
+persistence (atomic writes, corrupt-file fallback). No network access — market data is
+mocked at the fetch layer; the same `decide()` code paths run in tests, backtests and live.
 
 ## Architecture
 

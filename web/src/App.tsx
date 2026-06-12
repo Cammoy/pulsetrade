@@ -4,11 +4,14 @@ import Header from './components/Header'
 import StatsBar from './components/StatsBar'
 import BotCard from './components/BotCard'
 import TradeList from './components/TradeList'
+import MonthlyPnl from './components/MonthlyPnl'
+import ProfitFinder from './components/ProfitFinder'
 import Wizard from './components/Wizard'
 import BotDetail from './components/BotDetail'
+import ErrorBoundary from './components/ErrorBoundary'
 
-export default function App() {
-  const { init, bots, wizardOpen, openWizard, selectedBotId } = useStore()
+function Main() {
+  const { init, bots, wizardOpen, finderOpen, openWizard, selectedBotId } = useStore()
   const [ready, setReady] = useState(false)
   const [bootErr, setBootErr] = useState(false)
 
@@ -68,6 +71,8 @@ export default function App() {
           </div>
         )}
 
+        <MonthlyPnl />
+
         <TradeList />
 
         <footer className="pb-6 pt-2 text-center text-[11px] leading-relaxed text-slate-600">
@@ -78,7 +83,16 @@ export default function App() {
       </main>
 
       {wizardOpen && <Wizard />}
+      {finderOpen && <ProfitFinder />}
       {selectedBotId && <BotDetail />}
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <Main />
+    </ErrorBoundary>
   )
 }
