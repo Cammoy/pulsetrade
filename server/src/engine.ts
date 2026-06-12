@@ -286,3 +286,6 @@ export function deleteBot(id: string): boolean {
 export function trimTrades() {
   if (state.trades.length > 2000) state.trades.splice(0, state.trades.length - 2000)
 }
+
+/** Internal hooks for the self-test harness only. */
+export const __test = { execBuy, execSell }
