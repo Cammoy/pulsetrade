@@ -16,16 +16,33 @@ export const trackingReady = () => Boolean(process.env.ETHERSCAN_API_KEY)
 
 const ADDR = /^0x[a-fA-F0-9]{40}$/
 
-// A few well-known wallets to demonstrate the feature. Users should add their
-// own wallets they trust — these are examples, not trade recommendations.
+// Permanent watchlist of publicly documented "smart money" wallets — entities
+// tagged on Etherscan/Arkham with long, public track records (market makers,
+// well-known traders, founders). Tracking them is informational, NOT an
+// endorsement: smart money is sometimes wrong, and exchange wallets mix many
+// users' flow. Users can add/remove their own wallets on top.
 const SEED_WALLETS: TrackedWallet[] = [
-  { address: '0x28C6c06298d514Db089934071355E5743bf21d60', label: 'Binance 14 (example)', addedAt: 0 },
-  { address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', label: 'vitalik.eth (example)', addedAt: 0 },
+  { address: '0x020Ca66C30beC2c4Fe3861a94E4DB4A498A35872', label: 'machibigbrother.eth (trader/collector)', addedAt: 0 },
+  { address: '0xdBF5E9c5206d0dB70a90108bf936DA60221dC080', label: 'Wintermute (market maker)', addedAt: 0 },
+  { address: '0xdDAcAd3B1eDeE8E2F5b2E84F658202534fcb0374', label: 'DWF Labs (market maker)', addedAt: 0 },
+  { address: '0xd85351181b3F264ee0FDFa94518464d7c3DefaDa', label: 'James Fickel (ETH whale)', addedAt: 0 },
+  { address: '0x1c37FCbD2EC4Cc71cfA991681cf146346f9B8994', label: 'gcr.eth (trader)', addedAt: 0 },
+  { address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', label: 'vitalik.eth', addedAt: 0 },
+  { address: '0x28C6c06298d514Db089934071355E5743bf21d60', label: 'Binance 14 (exchange flow)', addedAt: 0 },
 ]
 
+/** Merge any missing permanent seeds into the user's watchlist (idempotent). */
 export function ensureSeeded() {
   if (!state.wallets) state.wallets = []
-  if (state.wallets.length === 0) state.wallets = SEED_WALLETS.map((w) => ({ ...w }))
+  const have = new Set(state.wallets.map((w) => w.address.toLowerCase()))
+  let added = false
+  for (const w of SEED_WALLETS) {
+    if (!have.has(w.address.toLowerCase())) {
+      state.wallets.push({ ...w })
+      added = true
+    }
+  }
+  if (added) save()
 }
 
 export function listWallets(): TrackedWallet[] {
@@ -152,10 +169,11 @@ export function latestActionForToken(events: SmartMoneyEvent[], token: string): 
 const feedCache = new Map<string, { at: number; events: SmartMoneyEvent[] }>()
 
 /** Recent smart-money activity across all tracked wallets on a network. */
-export async function smartMoneyFeed(network: string): Promise<{ events: SmartMoneyEvent[]; needsKey: boolean }> {
+export async function smartMoneyFeed(network: string): Promise<{ events: SmartMoneyEvent[]; needsKey: boolean; unsupported?: boolean }> {
   ensureSeeded()
   const net = networkById(network)
   if (!net) return { events: [], needsKey: !trackingReady() }
+  if (!net.evm) return { events: [], needsKey: false, unsupported: true } // Etherscan is EVM-only
   if (!trackingReady()) return { events: [], needsKey: true }
   const hit = feedCache.get(network)
   if (hit && Date.now() - hit.at < TX_TTL) return { events: hit.events, needsKey: false }
@@ -175,7 +193,7 @@ export async function smartMoneyFeed(network: string): Promise<{ events: SmartMo
 export async function walletTokenSignal(network: string, wallet: string, token: string): Promise<SmartMoneyEvent | null> {
   const net = networkById(network)
   const tok = net && tokenOf(network, token)
-  if (!net || !tok || !trackingReady()) return null
+  if (!net || !net.evm || !tok || !trackingReady()) return null
   const rows = await fetchTransfers(net.chainId, wallet)
   if (!rows) return null
   const w = state.wallets.find((x) => x.address.toLowerCase() === wallet.toLowerCase())
@@ -184,4 +202,4 @@ export async function walletTokenSignal(network: string, wallet: string, token: 
 }
 
 export const tokensForCopyTrade = () =>
-  NETWORKS.map((n) => ({ network: n.id, name: n.name, tokens: n.tokens.map((t) => t.symbol) }))
+  NETWORKS.filter((n) => n.evm).map((n) => ({ network: n.id, name: n.name, tokens: n.tokens.map((t) => t.symbol) }))

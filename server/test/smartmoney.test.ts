@@ -1,7 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mapTransfers, latestActionForToken } from '../src/smartmoney.js'
-import { tokenOf } from '../src/networks.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-sm-'))
+
+const { mapTransfers, latestActionForToken, ensureSeeded, listWallets, walletTokenSignal, smartMoneyFeed } = await import('../src/smartmoney.js')
+const { state } = await import('../src/store.js')
+const { tokenOf } = await import('../src/networks.js')
 
 const WALLET = '0x1111111111111111111111111111111111111111'
 const AERO = tokenOf('base', 'AERO')! // base token with 18 decimals
@@ -57,4 +64,25 @@ test('latestActionForToken returns the most recent event for that token', () => 
 
 test('mapTransfers returns [] for an unknown network', () => {
   assert.deepEqual(mapTransfers('nope', WALLET, 'x', [xfer({})], px), [])
+})
+
+test('permanent smart-money seeds merge idempotently and survive user wallets', () => {
+  state.wallets = [{ address: '0x' + '9'.repeat(40), label: 'My wallet', addedAt: 1 }]
+  ensureSeeded()
+  const labels = listWallets().map((w) => w.label)
+  assert.ok(labels.includes('My wallet'), 'user wallet kept')
+  assert.ok(labels.some((l) => /Wintermute/.test(l)), 'Wintermute seeded')
+  assert.ok(labels.some((l) => /machibigbrother/.test(l)), 'machibigbrother seeded')
+  assert.ok(labels.some((l) => /DWF Labs/.test(l)), 'DWF Labs seeded')
+  const count = listWallets().length
+  ensureSeeded() // run again — no duplicates
+  assert.equal(listWallets().length, count)
+  assert.ok(count >= 8, 'seeds + user wallet present')
+})
+
+test('wallet tracking is EVM-only: solana/icp are politely unsupported', async () => {
+  assert.equal(await walletTokenSignal('solana', '0x' + 'a'.repeat(40), 'JUP'), null)
+  const feed = await smartMoneyFeed('solana')
+  assert.equal(feed.events.length, 0)
+  assert.equal(feed.unsupported, true)
 })

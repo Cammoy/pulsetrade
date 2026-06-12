@@ -15,6 +15,7 @@ export interface Network {
   chainId: number
   native: { symbol: string; cg: string }
   usdt: { symbol: string; cg: string; address: string; decimals: number } // stable sweep target
+  evm: boolean // false ⇒ paper trading only (no live swaps / EVM screening / wallet tracking)
   avgGasUsd: number
   color: string
   gt: string // GeckoTerminal network slug (new-pool discovery + pool pricing)
@@ -28,6 +29,7 @@ export const NETWORKS: Network[] = [
     id: 'base',
     name: 'Base',
     chainId: 8453,
+    evm: true,
     native: { symbol: 'ETH', cg: 'ethereum' },
     usdt: USDT('0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2'),
     avgGasUsd: 0.02,
@@ -45,6 +47,7 @@ export const NETWORKS: Network[] = [
     id: 'arbitrum',
     name: 'Arbitrum',
     chainId: 42161,
+    evm: true,
     native: { symbol: 'ETH', cg: 'ethereum' },
     usdt: USDT('0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9'),
     avgGasUsd: 0.03,
@@ -62,6 +65,7 @@ export const NETWORKS: Network[] = [
     id: 'optimism',
     name: 'Optimism',
     chainId: 10,
+    evm: true,
     native: { symbol: 'ETH', cg: 'ethereum' },
     usdt: USDT('0x94b008aA00579c1307B0EF2c499aD98a8ce58e58'),
     avgGasUsd: 0.02,
@@ -79,6 +83,7 @@ export const NETWORKS: Network[] = [
     id: 'polygon',
     name: 'Polygon',
     chainId: 137,
+    evm: true,
     native: { symbol: 'POL', cg: 'polygon-ecosystem-token' },
     usdt: USDT('0xc2132D05D31c914a87C6611C10748AEb04B58e8F'),
     avgGasUsd: 0.01,
@@ -96,6 +101,7 @@ export const NETWORKS: Network[] = [
     id: 'bnb',
     name: 'BNB Chain',
     chainId: 56,
+    evm: true,
     native: { symbol: 'BNB', cg: 'binancecoin' },
     usdt: USDT('0x55d398326f99059fF775485246999027B3197955', 18),
     avgGasUsd: 0.1,
@@ -107,6 +113,39 @@ export const NETWORKS: Network[] = [
       { symbol: 'CAKE', name: 'PancakeSwap', cg: 'pancakeswap-token', address: '0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82', decimals: 18 },
       { symbol: 'LINK', name: 'Chainlink', cg: 'chainlink', address: '0xF8A0BF9cF54Bb92F17374d9e9A321E6a111a51bD', decimals: 18 },
       { symbol: 'DOGE', name: 'Dogecoin BEP-20', cg: 'dogecoin', address: '0xbA2aE424d960c26247Dd6c32edC70B295c744C43', decimals: 8 },
+    ],
+  },
+  {
+    id: 'solana',
+    name: 'Solana',
+    chainId: 101,
+    evm: false,
+    native: { symbol: 'SOL', cg: 'solana' },
+    usdt: { symbol: 'USDT', cg: 'tether', address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNUS', decimals: 6 },
+    avgGasUsd: 0.002,
+    color: '#9945FF',
+    gt: 'solana',
+    tokens: [
+      { symbol: 'JUP', name: 'Jupiter', cg: 'jupiter-exchange-solana', address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', decimals: 6 },
+      { symbol: 'RAY', name: 'Raydium', cg: 'raydium', address: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', decimals: 6 },
+      { symbol: 'BONK', name: 'Bonk', cg: 'bonk', address: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', decimals: 5 },
+      { symbol: 'WIF', name: 'dogwifhat', cg: 'dogwifcoin', address: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', decimals: 6 },
+      { symbol: 'JTO', name: 'Jito', cg: 'jito-governance-token', address: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL', decimals: 9 },
+    ],
+  },
+  {
+    id: 'icp',
+    name: 'Internet Computer',
+    chainId: 0,
+    evm: false,
+    native: { symbol: 'ICP', cg: 'internet-computer' },
+    usdt: { symbol: 'ckUSDT', cg: 'tether', address: 'cngnf-vqaaa-aaaar-qag4q-cai', decimals: 6 },
+    avgGasUsd: 0.001,
+    color: '#29ABE2',
+    gt: '', // GeckoTerminal does not index ICP DEXes — sniping unavailable
+    tokens: [
+      { symbol: 'ICP', name: 'Internet Computer', cg: 'internet-computer', address: 'ryjl3-tyaaa-aaaaa-aaaba-cai', decimals: 8 },
+      { symbol: 'ckBTC', name: 'Chain-key Bitcoin', cg: 'chain-key-bitcoin', address: 'mxzaz-hqaaa-aaaar-qaada-cai', decimals: 8 },
     ],
   },
 ]

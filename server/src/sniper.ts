@@ -123,9 +123,11 @@ export interface SafeFeedOptions {
 export const SAFE_DEFAULTS: SafeFeedOptions = {
   minLiquidityUsd: 10_000,
   minHolders: 50,
-  maxTopHolderPct: 30,
-  maxTop10Pct: 70,
-  minScore: 60,
+  // Dominance caps exclude burned/locked supply. 40/85 keeps out true
+  // single-whale setups without rejecting every project with a treasury.
+  maxTopHolderPct: 40,
+  maxTop10Pct: 85,
+  minScore: 55,
 }
 
 export interface SafePool extends PoolCandidate {
@@ -161,6 +163,13 @@ export function passesHardFilter(gp: Record<string, any> | undefined, o: SafeFee
   return true
 }
 
+// Stables and wrapped natives: pass every safety check but make no sense as
+// snipe targets — they only crowd out real candidates.
+const BORING_SYMBOLS = new Set([
+  'usdt', 'usdc', 'usdc.e', 'usdbc', 'dai', 'fdusd', 'tusd', 'usde', 'usds', 'pyusd', 'usd1', 'usdt0', 'busd', 'mim', 'frax',
+  'weth', 'wbnb', 'wpol', 'wmatic', 'wbtc', 'cbbtc', 'btcb', 'steth', 'wsteth', 'cbeth', 'reth',
+])
+
 const safeCache = new Map<string, { at: number; result: { pools: SafePool[]; scanned: number } }>()
 const SAFE_TTL = 180_000 // 3 min — screened tokens stay valid; eases provider rate limits
 
@@ -173,6 +182,8 @@ export async function discoverSafePools(
 ): Promise<{ pools: SafePool[]; scanned: number; error?: string }> {
   const net = networkById(network)
   if (!net) return { pools: [], scanned: 0, error: 'unknown network' }
+  if (!net.evm || !net.gt)
+    return { pools: [], scanned: 0, error: `Sniping is not available on ${net.name} — safety screening covers EVM networks only` }
   const o = { ...SAFE_DEFAULTS, ...opts }
   const key = `${network}:${mode}:${o.minLiquidityUsd}`
   const hit = safeCache.get(key)
@@ -181,11 +192,21 @@ export async function discoverSafePools(
   const { pools, error } = await discoverPools(network, mode, now)
   if (!pools.length) return { pools: [], scanned: 0, error }
 
-  // Feed-level requirements: real liquidity and a live price. Screen the most
-  // liquid candidates first (cap the count to stay within provider rate limits).
+  // Feed-level requirements: real liquidity, a live price, one pool per token
+  // (the feed often lists the same token across several pools), and no
+  // stables / wrapped natives — safe, but pointless to snipe. Screen the most
+  // liquid candidates first (capped for provider rate limits).
+  const seenTok = new Set<string>()
   const candidates = pools
     .filter((p) => (p.liquidityUsd ?? 0) >= o.minLiquidityUsd && (p.priceUsd ?? 0) > 0 && /^0x[a-fA-F0-9]{40}$/.test(p.tokenAddress))
+    .filter((p) => !BORING_SYMBOLS.has(p.tokenSymbol.toLowerCase()))
     .sort((a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0))
+    .filter((p) => {
+      const k = p.tokenAddress.toLowerCase()
+      if (seenTok.has(k)) return false
+      seenTok.add(k)
+      return true
+    })
     .slice(0, 12)
 
   // Screen each candidate individually. GoPlus only returns pre-indexed tokens
@@ -193,12 +214,14 @@ export async function discoverSafePools(
   // indexing) is the reliable path. Bounded concurrency keeps us under rate
   // limits while staying fast.
   const safe: SafePool[] = []
+  let gpHits = 0
   let i = 0
   const worker = async () => {
     while (i < candidates.length) {
       const p = candidates[i++]
       const gpMap = await batchGoPlus(net.chainId, [p.tokenAddress])
       const gp = gpMap.get(p.tokenAddress.toLowerCase())
+      if (gp) gpHits++
       if (!passesHardFilter(gp, o)) continue // verified · sellable · distributed
       const report = await screenPrefetched(net.id, p.tokenAddress, p.tokenSymbol, gp!)
       if (report.tradeable && report.score >= o.minScore) safe.push({ ...p, report })
@@ -212,6 +235,21 @@ export async function discoverSafePools(
   // recent good result — keep serving the last non-empty scan for a while.
   if (safe.length === 0 && hit && hit.result.pools.length > 0 && now - hit.at < SAFE_TTL * 2) {
     return hit.result
+  }
+  // If the security provider answered for NONE of the candidates, this was a
+  // rate-limit/outage, not a verdict — report it and don't cache the empty.
+  if (candidates.length >= 3 && gpHits === 0) {
+    return { pools: safe, scanned: pools.length, error: 'security provider is rate-limiting — rescan in a minute' }
+  }
+  // Partial coverage: surface it (results still flow) and don't cache, so the
+  // next rescan re-checks the unscreened candidates (1h GoPlus cache makes
+  // coverage accumulate across rescans).
+  if (gpHits < candidates.length) {
+    return {
+      pools: safe,
+      scanned: pools.length,
+      error: `screened ${gpHits} of ${candidates.length} candidates (provider rate limit) — rescan shortly for full coverage`,
+    }
   }
   safeCache.set(key, { at: now, result })
   return result

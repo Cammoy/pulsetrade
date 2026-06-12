@@ -129,7 +129,7 @@ export default function AutoSniperPanel() {
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-slate-400">Network</span>
           <select className="input" value={network} onChange={(e) => setNetwork(e.target.value)}>
-            {meta.networks.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+            {meta.networks.filter((n) => n.evm !== false).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
           </select>
         </label>
         <label className="block">

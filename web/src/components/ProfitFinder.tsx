@@ -9,10 +9,18 @@ const RISK_CLS: Record<string, string> = {
   aggressive: 'bg-rose-500/10 text-rose-300',
 }
 
+const SCOPES = [
+  { id: 'curated', label: '🛡️ Curated', blurb: 'the vetted coins on one network' },
+  { id: 'top100', label: '🚀 Top-100 movers', blurb: 'the strongest 24h gainers of the top-100 by market cap' },
+  { id: 'trending', label: '🔥 Trending (safe)', blurb: 'trending pools that pass the full safety screen' },
+] as const
+type Scope = (typeof SCOPES)[number]['id']
+
 export default function ProfitFinder() {
-  const { meta, openFinder, createBot } = useStore()
+  const { meta, openFinder, createBot, refresh } = useStore()
   const [budget, setBudget] = useState('100')
   const [network, setNetwork] = useState('base')
+  const [scope, setScope] = useState<Scope>('curated')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<FinderResult | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -28,7 +36,7 @@ export default function ProfitFinder() {
       const r = await fetch('/api/profit-finder', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ budgetUsd: Number(budget), network }),
+        body: JSON.stringify({ budgetUsd: Number(budget), network, scope }),
       })
       const data = await r.json()
       if (data.error) setErr(data.error)
@@ -40,18 +48,47 @@ export default function ProfitFinder() {
   }
 
   const launch = async (row: FinderRow) => {
+    if (!row.launch) return
     const key = `${row.token}/${row.strategy}/${row.risk}`
     setLaunching(key)
-    const out = await createBot({
-      network: row.network,
-      token: row.token,
-      strategy: row.strategy,
-      risk: row.risk,
-      budgetUsd: Number(budget),
-    })
-    setLaunching(null)
-    if (out.error) setErr(out.error)
-    else openFinder(false)
+    setErr(null)
+    if (row.launch.kind === 'bot') {
+      const out = await createBot({
+        network: row.launch.network,
+        token: row.launch.token,
+        strategy: row.strategy,
+        risk: row.risk,
+        budgetUsd: Number(budget),
+      })
+      setLaunching(null)
+      if (out.error) return setErr(out.error)
+      openFinder(false)
+    } else {
+      // Trending row → arm a screened snipe with sensible defaults.
+      try {
+        const r = await fetch('/api/sniper', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            network: row.launch.network,
+            poolAddress: row.launch.poolAddress,
+            tokenAddress: row.launch.tokenAddress,
+            tokenSymbol: row.launch.token,
+            tokenName: row.tokenName,
+            budgetUsd: Number(budget),
+            sniper: { takeProfitPct: 50, stopLossPct: 25, maxHoldMin: 120 },
+          }),
+        })
+        const data = await r.json()
+        setLaunching(null)
+        if (data.error) return setErr(data.error)
+        await refresh()
+        openFinder(false)
+      } catch {
+        setLaunching(null)
+        setErr('Engine unreachable')
+      }
+    }
   }
 
   const best = result?.rows[0]
@@ -70,7 +107,21 @@ export default function ProfitFinder() {
           <button className="btn-ghost !px-2.5 !py-1" onClick={() => openFinder(false)}>✕</button>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-end gap-3">
+        <div className="mt-3 flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+          {SCOPES.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => { setScope(s.id); setResult(null); setErr(null) }}
+              title={s.blurb}
+              className={`flex-1 cursor-pointer rounded-lg px-3 py-1.5 font-semibold transition-colors ${scope === s.id ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 px-1 text-[11px] text-slate-500">Scans {SCOPES.find((s) => s.id === scope)?.blurb}.</p>
+
+        <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-400">Here is…</span>
             <div className="flex items-center gap-1">
@@ -78,14 +129,18 @@ export default function ProfitFinder() {
               <input className="input !w-28 text-base font-semibold" type="number" min={10} value={budget} onChange={(e) => setBudget(e.target.value)} />
             </div>
           </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-400">Network</span>
-            <select className="input !w-40" value={network} onChange={(e) => setNetwork(e.target.value)}>
-              {meta.networks.map((n) => (
-                <option key={n.id} value={n.id}>{n.name}</option>
-              ))}
-            </select>
-          </label>
+          {scope !== 'top100' && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-400">Network</span>
+              <select className="input !w-40" value={network} onChange={(e) => setNetwork(e.target.value)}>
+                {meta.networks
+                  .filter((n) => scope !== 'trending' || n.evm !== false)
+                  .map((n) => (
+                    <option key={n.id} value={n.id}>{n.name}</option>
+                  ))}
+              </select>
+            </label>
+          )}
           <button className="btn-primary" disabled={loading || Number(budget) < 10} onClick={run}>
             {loading ? 'Backtesting every combination…' : '🔍 Find max profit'}
           </button>
@@ -94,7 +149,11 @@ export default function ProfitFinder() {
         {err && <div className="mt-3 rounded-xl bg-rose-500/10 p-2.5 text-xs text-rose-300">{err}</div>}
         {loading && (
           <div className="mt-4 animate-pulse rounded-xl bg-white/[0.03] p-4 text-center text-xs text-slate-500">
-            Running up to 60 backtests on real market history — a few seconds…
+            {scope === 'top100'
+              ? 'Scanning the top-100 movers on real market history — the free data tier paces this, so it can take 1–2 minutes…'
+              : scope === 'trending'
+                ? 'Safety-screening trending pools, then backtesting the survivors on their real pool candles…'
+                : 'Running up to 60 backtests on real market history — a few seconds…'}
           </div>
         )}
 
@@ -118,7 +177,7 @@ export default function ProfitFinder() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-[#0c101c] text-left text-[10px] uppercase tracking-wider text-slate-500">
                   <tr>
-                    {['#', 'Coin', 'Strategy', 'Risk', `Profit on ${fmtUsd(Number(budget))}`, 'Return', 'Win rate', 'Max DD', 'Trades', ''].map((h) => (
+                    {['#', 'Coin', scope === 'top100' ? '24h' : 'Net', 'Strategy', 'Risk', `Profit on ${fmtUsd(Number(budget))}`, 'Return', 'Win rate', 'Max DD', 'Trades', ''].map((h) => (
                       <th key={h} className="px-2.5 py-2 font-medium whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -129,7 +188,12 @@ export default function ProfitFinder() {
                     return (
                       <tr key={key} className={`border-t border-white/[0.04] tabular-nums hover:bg-white/[0.02] ${i === 0 ? 'bg-emerald-500/[0.04]' : ''}`}>
                         <td className="px-2.5 py-1.5 text-slate-600">{i + 1}</td>
-                        <td className="px-2.5 py-1.5 font-medium text-slate-200">{row.token}</td>
+                        <td className="px-2.5 py-1.5 font-medium text-slate-200" title={row.tokenName}>{row.token}</td>
+                        <td className="px-2.5 py-1.5 text-slate-500">
+                          {scope === 'top100'
+                            ? (row.change24hPct != null ? <span className={pnlColor(row.change24hPct)}>{fmtPct(row.change24hPct)}</span> : '—')
+                            : row.network}
+                        </td>
                         <td className="px-2.5 py-1.5 text-slate-300">{row.strategyName}</td>
                         <td className="px-2.5 py-1.5"><span className={`chip capitalize ${RISK_CLS[row.risk]}`}>{row.risk}</span></td>
                         <td className={`px-2.5 py-1.5 font-semibold ${pnlColor(row.profitUsd)}`}>{fmtSign(row.profitUsd)}</td>
@@ -138,9 +202,15 @@ export default function ProfitFinder() {
                         <td className="px-2.5 py-1.5 text-amber-300/80">−{row.maxDrawdownPct}%</td>
                         <td className="px-2.5 py-1.5 text-slate-400">{row.trades}</td>
                         <td className="px-2.5 py-1.5">
-                          <button className="btn-ghost !px-2 !py-1 text-[11px]" disabled={launching !== null} onClick={() => launch(row)}>
-                            {launching === key ? '…' : '🚀 Launch'}
-                          </button>
+                          {row.launch ? (
+                            <button className="btn-ghost !px-2 !py-1 text-[11px]" disabled={launching !== null} onClick={() => launch(row)}>
+                              {launching === key ? '…' : row.launch.kind === 'snipe' ? '🎯 Snipe' : '🚀 Launch'}
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-600" title="This coin is not in the curated tradable lists yet — shown for insight only">
+                              watch only
+                            </span>
+                          )}
                         </td>
                       </tr>
                     )

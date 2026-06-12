@@ -6,6 +6,9 @@ const spotCache = new Map<string, number>()
 let spotFetchedAt = 0
 let backoffUntil = 0
 
+/** How long CoinGecko has us in the penalty box (0 = clear to fetch). */
+export const backoffRemainingMs = () => Math.max(0, backoffUntil - Date.now())
+
 const candleCache = new Map<string, { at: number; closes: { t: number; c: number }[] }>()
 
 async function cgFetch(url: string): Promise<any | null> {

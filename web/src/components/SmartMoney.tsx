@@ -92,7 +92,7 @@ export default function SmartMoney() {
             ))}
           </div>
           <select className="input !w-36 !py-1.5 text-xs" value={network} onChange={(e) => setNetwork(e.target.value)}>
-            {meta.networks.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+            {meta.networks.filter((n) => n.evm !== false).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
           </select>
           {tab === 'feed' && <button className="btn-ghost !py-1.5 text-xs" onClick={loadFeed} disabled={loading}>{loading ? 'Loading…' : '↻'}</button>}
         </div>

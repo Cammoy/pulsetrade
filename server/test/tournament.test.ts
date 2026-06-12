@@ -9,7 +9,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-tourney
 const PRICES: Record<string, number> = { ethereum: 2000, chainlink: 10, tether: 1 }
 
 const { state } = await import('../src/store.js')
-const { startTournament, endTournament, deleteTournament, serializeTournament, createCopyBot, createAiBot, __test } = await import('../src/engine.js')
+const { startTournament, endTournament, deleteTournament, serializeTournament, createCopyBot, createAiBot, createBot, __test } = await import('../src/engine.js')
 const { getSpotPrices } = await import('../src/prices.js')
 const { networkById } = await import('../src/networks.js')
 
@@ -105,6 +105,21 @@ test('deleteTournament removes the tournament and its bots', () => {
 })
 
 // ── copy & AI bot factories ──────────────────────────────────────────────────
+
+test('createCopyBot rejects non-EVM networks (tracking is Etherscan-based)', () => {
+  const out: any = createCopyBot({ network: 'solana', token: 'JUP', risk: 'balanced', budgetUsd: 100, walletAddress: '0x' + 'a'.repeat(40), walletLabel: 'x' })
+  assert.ok('error' in out)
+  assert.match(out.error, /EVM/)
+})
+
+test('paper bots work on the new non-EVM networks (solana JUP, icp ICP)', () => {
+  const sol: any = createBot({ network: 'solana', token: 'JUP', strategy: 'meanrev', risk: 'balanced', budgetUsd: 100 })
+  assert.ok(!('error' in sol), sol.error)
+  assert.equal(sol.network, 'solana')
+  const icp: any = createBot({ network: 'icp', token: 'ICP', strategy: 'dca', risk: 'conservative', budgetUsd: 100 })
+  assert.ok(!('error' in icp), icp.error)
+  assert.equal(icp.token, 'ICP')
+})
 
 test('createCopyBot validates the wallet and tags the bot', () => {
   assert.ok('error' in (createCopyBot({ network: 'base', token: 'LINK', risk: 'balanced', budgetUsd: 100, walletAddress: 'nope', walletLabel: 'x' }) as any))

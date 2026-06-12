@@ -127,8 +127,8 @@ app.post('/api/tournaments/:id/end', (req, res) => {
 app.delete('/api/tournaments/:id', (req, res) => res.json({ ok: deleteTournament(req.params.id) }))
 
 app.post('/api/profit-finder', async (req, res) => {
-  const { budgetUsd, network, token } = req.body ?? {}
-  const out = await profitFinder({ budgetUsd: Number(budgetUsd), network, token })
+  const { budgetUsd, network, token, scope } = req.body ?? {}
+  const out = await profitFinder({ budgetUsd: Number(budgetUsd), network, token, scope })
   if ('error' in out) return res.status(400).json(out)
   res.json(out)
 })

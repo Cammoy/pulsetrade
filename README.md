@@ -18,7 +18,14 @@ The app starts in **paper mode**: strategies run against *real live market data*
 fills (gas + slippage included), so you can prove a configuration is profitable before risking
 a cent. All state persists in `server/data/state.json`.
 
-## The 5 networks
+## The networks
+
+Five cheap EVM networks for full live-capable trading, plus **Solana** and the
+**Internet Computer (ICP)** for paper trading (live swaps, sniping and wallet
+tracking are EVM-only for now — bots on Solana/ICP trade the curated coins,
+JUP/RAY/BONK/WIF/JTO and ICP/ckBTC, against real market prices).
+
+### The 5 EVM networks
 
 | Network | ~Cost per swap | Profits swept to |
 |---|---|---|
@@ -54,9 +61,11 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 - 💵 **Auto-sell to USDT** — every bot (wizard, sniper, auto-sniper, copy, AI, tournament) can
   sweep profits and stop-liquidations to USDT instead of the native coin; tournaments can
   auto-end after N hours and liquidate every contestant straight to USDT
-- 🐋 **Smart-money tracking & copy trading** — watch wallets, see their buys/sells of curated
-  tokens (Etherscan V2 feed), and launch copy-trade bots that mirror a wallet's entries and
-  exits (live feed needs `ETHERSCAN_API_KEY`; watchlist + copy bots work regardless)
+- 🐋 **Smart-money tracking & copy trading** — a permanent watchlist of publicly documented
+  smart-money wallets (Wintermute, DWF Labs, machibigbrother.eth, James Fickel, gcr.eth, …)
+  plus your own; see their buys/sells of curated tokens (Etherscan V2 feed) and launch
+  copy-trade bots that mirror a wallet's entries and exits (live feed needs
+  `ETHERSCAN_API_KEY`; watchlist + copy bots work regardless)
 - 🏆 **Bot tournaments** — pit 2–12 bots (any strategy × risk) on the same coin with equal
   budgets; a live leaderboard ranks them by return %, with optional auto-end and a podium
 - 👛 **Multi-wallet connect** — MetaMask, Coinbase Wallet, any injected/EIP-6963 wallet, and
@@ -73,8 +82,11 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 - 🛡️ **Pre-trade risk screening** — every token screened via GoPlus Security + honeypot.is for
   honeypots, non-sellable contracts, rug-pull setups, exit traps and owner controls; scored
   0–100 with named flags. A **hard, no-override block** for the Sniper; advisory in the wizard
-- 💡 **Profit Finder** — "here is $100": backtests every strategy × risk × coin on a network
-  over identical real 30-day history, ranks by profit, one click launches the winner
+- 💡 **Profit Finder** — "here is $100" with three scopes: **Curated** (every strategy × risk ×
+  coin on a network), **Top-100 movers** (the strongest 24h gainers of the top-100 by market
+  cap — curated ones launch with one click, the rest are watch-only), and **Trending (safe)**
+  (trending pools that pass the full safety screen, backtested on their real pool candles and
+  launchable as screened snipes)
 - 📒 **Monthly P&L ledger** — realized P&L, win rate, fees, native sweeps, volume and
   per-tolerance attribution per calendar month; persisted independently of trade history,
   so it survives trade trimming and bot deletion
@@ -111,7 +123,7 @@ accounting continues in parallel as the source of truth for P&L.
 npm test
 ```
 
-67 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
+120 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
 logic against deterministic price series, the paper executor's accounting (cost basis
 includes buy fees; an equity-identity test proves cash + position + native sweeps always
 equals budget + P&L), profit sweeps, stop-&-sweep, schedule windows (including overnight),

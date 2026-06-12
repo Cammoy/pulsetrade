@@ -11,6 +11,8 @@ export interface Network {
   name: string
   chainId: number
   native: { symbol: string; cg: string }
+  usdt?: { symbol: string; cg: string; address: string; decimals: number }
+  evm?: boolean
   avgGasUsd: number
   color: string
   tokens: Token[]
@@ -172,6 +174,11 @@ export interface FinderRow {
   maxDrawdownPct: number
   trades: number
   feesUsd: number
+  change24hPct?: number | null
+  launch?:
+    | { kind: 'bot'; network: string; token: string }
+    | { kind: 'snipe'; network: string; token: string; poolAddress: string; tokenAddress: string }
+    | null
 }
 
 export interface FinderResult {

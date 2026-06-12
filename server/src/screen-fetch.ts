@@ -25,15 +25,37 @@ async function fetchGoPlus(chainId: number, address: string): Promise<Record<str
   return map.get(address.toLowerCase()) ?? null
 }
 
-/** One GoPlus call for many tokens — used to screen a whole discovery feed. */
+// GoPlus's anonymous tier silently returns only ONE result per call even when
+// many comma-separated addresses are sent (verified empirically). So "batch"
+// means: dedupe, serve from a 1h cache, and fan out single-address requests
+// with bounded concurrency for the misses.
+const gpCache = new Map<string, { at: number; gp: Record<string, any> }>()
+const GP_TTL = 3_600_000
+const GP_CONCURRENCY = 3
+
 export async function batchGoPlus(chainId: number, addresses: string[]): Promise<Map<string, Record<string, any>>> {
   const out = new Map<string, Record<string, any>>()
-  if (!addresses.length) return out
-  const list = addresses.map((a) => a.toLowerCase()).join(',')
-  const data = await getJson(`https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${list}`, 12000)
-  const result = data?.result
-  if (!result) return out
-  for (const [k, v] of Object.entries<any>(result)) out.set(k.toLowerCase(), v)
+  const wanted = [...new Set(addresses.map((a) => a.toLowerCase()))]
+  const missing: string[] = []
+  for (const a of wanted) {
+    const hit = gpCache.get(`${chainId}:${a}`)
+    if (hit && Date.now() - hit.at < GP_TTL) out.set(a, hit.gp)
+    else missing.push(a)
+  }
+  let i = 0
+  const worker = async () => {
+    while (i < missing.length) {
+      const a = missing[i++]
+      const data = await getJson(`https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${a}`, 12000)
+      const result = data?.result
+      const key = result && Object.keys(result).find((k) => k.toLowerCase() === a)
+      if (key) {
+        out.set(a, result[key])
+        gpCache.set(`${chainId}:${a}`, { at: Date.now(), gp: result[key] })
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(GP_CONCURRENCY, missing.length) }, worker))
   return out
 }
 
@@ -41,9 +63,29 @@ async function fetchHoneypot(chainId: number, address: string): Promise<Record<s
   return getJson(`https://api.honeypot.is/v2/IsHoneypot?address=${address}&chainID=${chainId}`)
 }
 
+/**
+ * Non-EVM networks (Solana, ICP): our screening providers are EVM-only, so we
+ * return an honest advisory report. Curated coins there are major, established
+ * assets, so paper bots may trade them (tradeable: true) — but the report
+ * clearly says no contract-level screen ran.
+ */
+function nonEvmAdvisory(network: string, token: string): RiskReport {
+  return {
+    network, chainId: 0, token, score: 50, verdict: 'caution', tradeable: true,
+    flags: [{
+      id: 'screening-unavailable',
+      label: 'Contract screening unavailable on this network',
+      detail: 'Honeypot/rug screening providers cover EVM chains only. Only the curated, established coins are offered here; sniping arbitrary tokens is disabled.',
+      severity: 'warn',
+    }],
+    positives: [], buyTaxPct: null, sellTaxPct: null, sources: [], checkedAt: Date.now(),
+  }
+}
+
 /** Screen an arbitrary token address on a known network. Cached 5 min. */
 export async function screenAddress(network: string, address: string, symbol?: string): Promise<RiskReport> {
   const net = networkById(network)
+  if (net && !net.evm) return nonEvmAdvisory(network, symbol ?? address)
   if (!net) {
     return {
       network, chainId: 0, token: symbol ?? address, score: 0, verdict: 'danger', tradeable: false,

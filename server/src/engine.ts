@@ -148,6 +148,10 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
 async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: number, price: number) {
   if (state.settings.mode !== 'live' || !liveReady()) return
   const net = networkById(bot.network)!
+  if (!net.evm) {
+    log(bot, 'LIVE EXECUTION SKIPPED: live trading is EVM-only — this network trades in paper', 'warn')
+    return
+  }
   // Sniper bots carry their token address/decimals on bot.pool; others resolve
   // from the curated list.
   const tokenAddress = bot.pool?.tokenAddress ?? tokenOf(bot.network, bot.token)?.address
@@ -575,6 +579,7 @@ export function createCopyBot(input: {
   sweepTo?: Bot['sweepTo']
 }): Bot | { error: string } {
   if (!/^0x[a-fA-F0-9]{40}$/.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
+  if (!networkById(input.network)?.evm) return { error: 'copy trading needs an EVM network (wallet tracking is Etherscan-based)' }
   const out = createBot({
     network: input.network, token: input.token, strategy: 'copytrade', risk: input.risk, budgetUsd: input.budgetUsd,
     name: `🐋 Copy ${input.walletLabel} · ${input.token}`,

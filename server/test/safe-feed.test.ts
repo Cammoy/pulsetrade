@@ -46,9 +46,21 @@ test('hard filter: single-wallet dominance rejected', () => {
   assert.equal(passesHardFilter({ ...cleanGp, holders: [{ percent: '0.45', address: '0xwhale' }] }, SAFE_DEFAULTS), false)
 })
 
+test('hard filter: a project treasury under the cap passes (relaxed thresholds)', () => {
+  assert.equal(passesHardFilter({ ...cleanGp, holders: [{ percent: '0.35', address: '0xtreasury' }] }, SAFE_DEFAULTS), true)
+})
+
+test('safe feed: non-EVM networks return a clear error, not silence', async () => {
+  const sol = await discoverSafePools('solana', 'new', NOW)
+  assert.equal(sol.pools.length, 0)
+  assert.match(sol.error ?? '', /not available|EVM/i)
+  const icp = await discoverSafePools('icp', 'new', NOW)
+  assert.match(icp.error ?? '', /not available|EVM/i)
+})
+
 test('hard filter: top-10 cabal rejected, locked/dead wallets ignored', () => {
-  const cabal = Array.from({ length: 10 }, (_, i) => ({ percent: '0.08', address: `0xc${i}` }))
-  assert.equal(passesHardFilter({ ...cleanGp, holders: cabal }, SAFE_DEFAULTS), false, '80% across 10 wallets fails')
+  const cabal = Array.from({ length: 10 }, (_, i) => ({ percent: '0.09', address: `0xc${i}` }))
+  assert.equal(passesHardFilter({ ...cleanGp, holders: cabal }, SAFE_DEFAULTS), false, '90% across 10 wallets fails')
   const mostlyBurned = [{ percent: '0.6', address: '0x' + '0'.repeat(40), is_locked: 0 }, { percent: '0.05', address: '0xaaa' }]
   assert.equal(passesHardFilter({ ...cleanGp, holders: mostlyBurned }, SAFE_DEFAULTS), true, 'burn address exempt from dominance')
 })
