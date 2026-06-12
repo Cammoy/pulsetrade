@@ -69,7 +69,7 @@ export default function BotDetail() {
               c: 'text-slate-200',
             },
             {
-              l: `Native taken (${net?.native.symbol})`,
+              l: `Profit taken (${bot.sweepTo === 'usdt' ? 'USDT' : net?.native.symbol})`,
               v: bot.stats.nativeTakenQty > 0 ? bot.stats.nativeTakenQty.toPrecision(4) : '0',
               c: 'text-cyan-300',
             },

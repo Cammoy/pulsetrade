@@ -14,11 +14,14 @@ export interface Network {
   name: string
   chainId: number
   native: { symbol: string; cg: string }
+  usdt: { symbol: string; cg: string; address: string; decimals: number } // stable sweep target
   avgGasUsd: number
   color: string
   gt: string // GeckoTerminal network slug (new-pool discovery + pool pricing)
   tokens: Token[]
 }
+
+const USDT = (address: string, decimals = 6) => ({ symbol: 'USDT', cg: 'tether', address, decimals })
 
 export const NETWORKS: Network[] = [
   {
@@ -26,6 +29,7 @@ export const NETWORKS: Network[] = [
     name: 'Base',
     chainId: 8453,
     native: { symbol: 'ETH', cg: 'ethereum' },
+    usdt: USDT('0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2'),
     avgGasUsd: 0.02,
     color: '#0052ff',
     gt: 'base',
@@ -42,6 +46,7 @@ export const NETWORKS: Network[] = [
     name: 'Arbitrum',
     chainId: 42161,
     native: { symbol: 'ETH', cg: 'ethereum' },
+    usdt: USDT('0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9'),
     avgGasUsd: 0.03,
     color: '#2d374b',
     gt: 'arbitrum',
@@ -58,6 +63,7 @@ export const NETWORKS: Network[] = [
     name: 'Optimism',
     chainId: 10,
     native: { symbol: 'ETH', cg: 'ethereum' },
+    usdt: USDT('0x94b008aA00579c1307B0EF2c499aD98a8ce58e58'),
     avgGasUsd: 0.02,
     color: '#ff0420',
     gt: 'optimism',
@@ -74,6 +80,7 @@ export const NETWORKS: Network[] = [
     name: 'Polygon',
     chainId: 137,
     native: { symbol: 'POL', cg: 'polygon-ecosystem-token' },
+    usdt: USDT('0xc2132D05D31c914a87C6611C10748AEb04B58e8F'),
     avgGasUsd: 0.01,
     color: '#8247e5',
     gt: 'polygon_pos',
@@ -90,6 +97,7 @@ export const NETWORKS: Network[] = [
     name: 'BNB Chain',
     chainId: 56,
     native: { symbol: 'BNB', cg: 'binancecoin' },
+    usdt: USDT('0x55d398326f99059fF775485246999027B3197955', 18),
     avgGasUsd: 0.1,
     color: '#f0b90b',
     gt: 'bsc',
@@ -114,6 +122,7 @@ export function allPriceIds(): string[] {
   const ids = new Set<string>()
   for (const n of NETWORKS) {
     ids.add(n.native.cg)
+    ids.add(n.usdt.cg)
     for (const t of n.tokens) ids.add(t.cg)
   }
   return [...ids]

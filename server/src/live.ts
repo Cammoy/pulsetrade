@@ -29,7 +29,8 @@ function client(chainId: number) {
 }
 
 /**
- * Swap on-chain. side 'buy' = spend native for token, 'sell' = token → native.
+ * Swap on-chain. side 'buy' = spend native for token, 'sell' = token → native
+ * (or token → buyTokenAddress when given, e.g. USDT sweeps).
  * Amounts are in the SELL asset's base units. Returns the tx hash.
  */
 export async function executeSwap(opts: {
@@ -37,11 +38,12 @@ export async function executeSwap(opts: {
   tokenAddress: string
   side: 'buy' | 'sell'
   sellAmountBaseUnits: bigint
+  buyTokenAddress?: string
 }): Promise<Hex> {
   const wc = client(opts.chainId)
   const taker = wc.account.address
   const sellToken = opts.side === 'buy' ? NATIVE : opts.tokenAddress
-  const buyToken = opts.side === 'buy' ? opts.tokenAddress : NATIVE
+  const buyToken = opts.side === 'buy' ? opts.tokenAddress : opts.buyTokenAddress ?? NATIVE
 
   const qs = new URLSearchParams({
     chainId: String(opts.chainId),

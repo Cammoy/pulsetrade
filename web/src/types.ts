@@ -89,6 +89,7 @@ export interface Tournament {
   status: 'running' | 'ended'
   createdAt: number
   endsAt: number | null
+  sweepTo?: 'native' | 'usdt'
   winnerBotId: string | null
   standings: TournamentStanding[]
 }
@@ -109,6 +110,7 @@ export interface Bot {
   copy?: { walletAddress: string; walletLabel: string }
   ai?: boolean
   tournamentId?: string
+  sweepTo?: 'native' | 'usdt'
   riskReport?: RiskReport
   position: { qty: number; avgCostUsd: number; costUsd: number; openedAt: number | null }
   state: Record<string, unknown>

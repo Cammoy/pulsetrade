@@ -24,6 +24,7 @@ export default function SmartMoney() {
   const [copyToken, setCopyToken] = useState('')
   const [copyRisk, setCopyRisk] = useState('balanced')
   const [copyBudget, setCopyBudget] = useState('200')
+  const [copySweep, setCopySweep] = useState<'native' | 'usdt'>('native')
   const [copyErr, setCopyErr] = useState<string | null>(null)
 
   const net = meta?.networks.find((n) => n.id === network)
@@ -63,7 +64,7 @@ export default function SmartMoney() {
     const walletAddress = (copyWallet as any).address ?? (copyWallet as any).wallet
     const r = await fetch('/api/copy-bot', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ network, token: copyToken || net?.tokens[0]?.symbol, risk: copyRisk, budgetUsd: Number(copyBudget), walletAddress, walletLabel: copyWallet.label }),
+      body: JSON.stringify({ network, token: copyToken || net?.tokens[0]?.symbol, risk: copyRisk, budgetUsd: Number(copyBudget), walletAddress, walletLabel: copyWallet.label, sweepTo: copySweep }),
     })
     const data = await r.json()
     if (data.error) setCopyErr(data.error)
@@ -166,6 +167,12 @@ export default function SmartMoney() {
               </label>
               <label className="block"><span className="mb-1 block text-[11px] text-slate-400">Budget ($)</span>
                 <input className="input !w-24 !py-1.5 text-xs" type="number" min={10} value={copyBudget} onChange={(e) => setCopyBudget(e.target.value)} />
+              </label>
+              <label className="block"><span className="mb-1 block text-[11px] text-slate-400">Profits to</span>
+                <select className="input !py-1.5 text-xs" value={copySweep} onChange={(e) => setCopySweep(e.target.value as 'native' | 'usdt')}>
+                  <option value="native">Native</option>
+                  <option value="usdt">USDT</option>
+                </select>
               </label>
               <button className="btn-primary !py-1.5" disabled={Number(copyBudget) < 10} onClick={launchCopy}>🐋 Launch copy bot</button>
               <button className="btn-ghost !py-1.5 text-xs" onClick={() => setCopyWallet(null)}>cancel</button>

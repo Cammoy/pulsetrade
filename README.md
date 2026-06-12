@@ -47,9 +47,13 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 
 ## Features
 
-- 🤖 **AI Trader** — Claude (`claude-opus-4-8`) analyses recent price action, RSI and moving
-  averages and decides BUY/SELL/HOLD; position size scales with the model's confidence. One
-  signal per coin, shared across bots, refreshed ~every 10 min (needs `ANTHROPIC_API_KEY`)
+- 🤖 **AI Trader** — Google Gemini (`gemini-2.5-flash`) analyses recent price action, RSI and
+  moving averages and decides BUY/SELL/HOLD; position size scales with the model's confidence.
+  One signal per coin, shared across bots, refreshed ~every 10 min (needs `GEMINI_API_KEY`;
+  the free tier covers this usage)
+- 💵 **Auto-sell to USDT** — every bot (wizard, sniper, auto-sniper, copy, AI, tournament) can
+  sweep profits and stop-liquidations to USDT instead of the native coin; tournaments can
+  auto-end after N hours and liquidate every contestant straight to USDT
 - 🐋 **Smart-money tracking & copy trading** — watch wallets, see their buys/sells of curated
   tokens (Etherscan V2 feed), and launch copy-trade bots that mirror a wallet's entries and
   exits (live feed needs `ETHERSCAN_API_KEY`; watchlist + copy bots work regardless)
@@ -137,7 +141,7 @@ server/  Express + WebSocket engine (Node, tsx)
   src/screen-fetch.ts  GoPlus + honeypot.is fetch wrapper, cached
   src/sniper.ts      GeckoTerminal new/trending pool discovery
   src/smartmoney.ts  wallet watchlist + Etherscan V2 transfer feed + copy signals
-  src/ai-trader.ts   Claude-powered per-coin buy/sell/hold signals (Anthropic SDK)
+  src/ai-trader.ts   Gemini-powered per-coin buy/sell/hold signals (v1beta REST)
   src/live.ts        0x v2 swap execution (dormant without keys)
 web/     Vite + React + Tailwind v4 + wagmi/viem + lightweight-charts
 ```

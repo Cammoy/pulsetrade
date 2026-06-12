@@ -44,7 +44,7 @@ export default function Header() {
 
         <div className="ml-auto flex items-center gap-1.5">
           <WalletButton />
-          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openAi(true)} title="AI Trader — Claude decides buy/sell/hold">🤖</button>
+          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openAi(true)} title="AI Trader — Gemini decides buy/sell/hold">🤖</button>
           <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openSmartMoney(true)} title="Smart Money — track wallets & copy trade">🐋</button>
           <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openTournament(true)} title="Bot tournament — compete for the best return">🏆</button>
           <button className="btn-ghost !px-2.5 hidden sm:inline-flex" onClick={() => openSniper(true)} title="Snipe freshly launched tokens — auto-screened for honeypots and rugs">🎯</button>

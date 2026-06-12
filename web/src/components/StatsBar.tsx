@@ -31,7 +31,7 @@ export default function StatsBar() {
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
         <Stat label="Total P&L" value={fmtSign(totalPnl)} color={pnlColor(totalPnl)} sub={`realized ${fmtSign(realized)}`} />
-        <Stat label="Profit taken (native)" value={fmtUsd(native)} sub="swept to ETH / BNB / POL" color="text-cyan-300" />
+        <Stat label="Profit taken" value={fmtUsd(native)} sub="swept to ETH / BNB / POL / USDT" color="text-cyan-300" />
         <Stat label="Active bots" value={`${active.length}/${bots.length}`} sub="running or scheduled" />
         <Stat
           label="Win rate"

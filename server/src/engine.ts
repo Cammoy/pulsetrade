@@ -98,16 +98,19 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
   if (p.qty < 1e-12) { p.qty = 0; p.costUsd = 0; p.openedAt = null }
 
   // Profit sweep: profits (or, on manual stop, ALL proceeds) convert to the
-  // chain's native coin so the bot never accumulates token bags.
-  const nativePrice = spot(net.native.cg) ?? 0
+  // bot's sweep target — the chain's native coin by default, or USDT when the
+  // bot was configured to auto-sell to a stable. Either way: no token bags.
+  const toUsdt = bot.sweepTo === 'usdt'
+  const sweepSymbol = toUsdt ? net.usdt.symbol : net.native.symbol
+  const sweepPrice = toUsdt ? spot(net.usdt.cg) ?? 1 : spot(net.native.cg) ?? 0
   let swept: Trade['sweptNative']
-  if (sweepAll && nativePrice > 0) {
-    swept = { qty: proceeds / nativePrice, symbol: net.native.symbol, usd: proceeds }
-  } else if (pnl > 0 && nativePrice > 0) {
-    swept = { qty: pnl / nativePrice, symbol: net.native.symbol, usd: pnl }
+  if (sweepAll && sweepPrice > 0) {
+    swept = { qty: proceeds / sweepPrice, symbol: sweepSymbol, usd: proceeds }
+  } else if (pnl > 0 && sweepPrice > 0) {
+    swept = { qty: pnl / sweepPrice, symbol: sweepSymbol, usd: pnl }
     bot.cashUsd += costBasis // principal returns to working capital
   } else {
-    bot.cashUsd += proceeds // loss (or no native price): net proceeds back to cash
+    bot.cashUsd += proceeds // loss (or no sweep price): net proceeds back to cash
   }
   if (swept) {
     bot.stats.nativeTakenQty += swept.qty
@@ -160,7 +163,14 @@ async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: numb
       side === 'buy'
         ? parseUnits((usd / nativePrice!).toFixed(18), 18) // native in
         : parseUnits(qty.toFixed(decimals), decimals)
-    const hash = await executeSwap({ chainId: net.chainId, tokenAddress, side, sellAmountBaseUnits: sellAmount })
+    const hash = await executeSwap({
+      chainId: net.chainId,
+      tokenAddress,
+      side,
+      sellAmountBaseUnits: sellAmount,
+      // Sells land in the bot's sweep target (USDT or native).
+      buyTokenAddress: side === 'sell' && bot.sweepTo === 'usdt' ? net.usdt.address : undefined,
+    })
     log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
   } catch (e: any) {
     log(bot, `LIVE EXECUTION FAILED (${side}): ${e.message ?? e}`, 'warn')
@@ -197,7 +207,7 @@ async function tickBot(bot: Bot) {
     if (candles.length < 30) return
     closes = candles.map((c) => c.c)
     closes.push(price)
-    // AI bots act on a shared, periodically-refreshed Claude signal (non-blocking).
+    // AI bots act on a shared, periodically-refreshed Gemini signal (non-blocking).
     if (bot.ai) {
       const sig = getAiSignal(bot.network, bot.token, closes)
       if (sig) bot.state.aiSignal = sig
@@ -320,12 +330,15 @@ export function createBot(input: {
   copy?: Bot['copy']
   ai?: boolean
   tournamentId?: string
+  sweepTo?: Bot['sweepTo']
 }): Bot | { error: string } {
   const net = networkById(input.network)
   const token = net && tokenOf(input.network, input.token)
   if (!net || !token) return { error: 'unknown network/token' }
   if (!strategyById(input.strategy)) return { error: 'unknown strategy' }
   if (!RISK[input.risk]) return { error: 'unknown risk tier' }
+  if (input.sweepTo !== undefined && input.sweepTo !== 'native' && input.sweepTo !== 'usdt')
+    return { error: "sweepTo must be 'native' or 'usdt'" }
   const budget = Number(input.budgetUsd)
   if (!Number.isFinite(budget) || budget < 10) return { error: 'budget must be at least $10' }
   const sched = input.schedule
@@ -350,6 +363,7 @@ export function createBot(input: {
     copy: input.copy,
     ai: input.ai || undefined,
     tournamentId: input.tournamentId,
+    sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
     stats: { realizedUsd: 0, feesUsd: 0, wins: 0, losses: 0, nativeTakenQty: 0, nativeTakenUsd: 0 },
@@ -380,6 +394,7 @@ export async function createSniper(input: {
   budgetUsd: number
   sniper: SniperConfig
   auto?: boolean
+  sweepTo?: Bot['sweepTo']
 }): Promise<(Bot & { riskReport: unknown }) | { error: string; riskReport?: unknown }> {
   const net = networkById(input.network)
   if (!net) return { error: 'unknown network' }
@@ -414,6 +429,7 @@ export async function createSniper(input: {
     pool: { poolAddress: input.poolAddress, tokenAddress: input.tokenAddress, decimals: input.decimals ?? 18 },
     sniper: s,
     auto: input.auto || undefined,
+    sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
     riskReport: report,
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
@@ -472,6 +488,7 @@ export async function autoScan(now = Date.now()): Promise<void> {
       budgetUsd: a.perSnipeUsd,
       sniper: a.config,
       auto: true,
+      sweepTo: a.sweepTo,
     })
     if (!('error' in out)) {
       a.poolUsd -= a.perSnipeUsd
@@ -489,6 +506,7 @@ export function startAutoSniper(input: {
   maxConcurrent?: number
   config: SniperConfig
   minLiquidityUsd?: number
+  sweepTo?: Bot['sweepTo']
 }): { error: string } | State['autoSniper'] {
   if (state.autoSniper?.enabled) return { error: 'Auto-Sniper is already running — stop it first' }
   if (!networkById(input.network)) return { error: 'unknown network' }
@@ -509,6 +527,7 @@ export function startAutoSniper(input: {
     perSnipeUsd: per,
     maxConcurrent,
     config: c,
+    sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
     minLiquidityUsd: Math.max(0, Number(input.minLiquidityUsd) || 10_000),
     tried: state.autoSniper?.tried ?? [],
     startedAt: Date.now(),
@@ -553,12 +572,14 @@ export function createCopyBot(input: {
   budgetUsd: number
   walletAddress: string
   walletLabel: string
+  sweepTo?: Bot['sweepTo']
 }): Bot | { error: string } {
   if (!/^0x[a-fA-F0-9]{40}$/.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
   const out = createBot({
     network: input.network, token: input.token, strategy: 'copytrade', risk: input.risk, budgetUsd: input.budgetUsd,
     name: `🐋 Copy ${input.walletLabel} · ${input.token}`,
     copy: { walletAddress: input.walletAddress, walletLabel: input.walletLabel },
+    sweepTo: input.sweepTo,
   })
   return out
 }
@@ -568,11 +589,13 @@ export function createAiBot(input: {
   token: string
   risk: Bot['risk']
   budgetUsd: number
+  sweepTo?: Bot['sweepTo']
 }): Bot | { error: string } {
   const out = createBot({
     network: input.network, token: input.token, strategy: 'ai', risk: input.risk, budgetUsd: input.budgetUsd,
     name: `🤖 AI ${input.token} · ${RISK[input.risk]?.label ?? input.risk}`,
     ai: true,
+    sweepTo: input.sweepTo,
   })
   return out
 }
@@ -626,6 +649,7 @@ export function startTournament(input: {
   budgetUsd: number
   contestants: { strategy: string; risk: Bot['risk'] }[]
   durationHours?: number
+  sweepTo?: Bot['sweepTo'] // on (auto-)end, contestants liquidate to this
 }): (Tournament & { standings: unknown }) | { error: string } {
   const net = networkById(input.network)
   if (!net || !tokenOf(input.network, input.token)) return { error: 'unknown network/token' }
@@ -644,6 +668,7 @@ export function startTournament(input: {
     status: 'running',
     createdAt: Date.now(),
     endsAt: input.durationHours && input.durationHours > 0 ? Date.now() + input.durationHours * 3_600_000 : null,
+    sweepTo: input.sweepTo === 'usdt' ? 'usdt' : 'native',
     winnerBotId: null,
   }
   state.tournaments.push(t)
@@ -652,6 +677,7 @@ export function startTournament(input: {
       network: input.network, token: input.token, strategy: c.strategy, risk: c.risk, budgetUsd: budget,
       name: `🏆 ${input.token} ${strategyById(c.strategy)!.name} · ${RISK[c.risk].label}`,
       tournamentId: t.id,
+      sweepTo: t.sweepTo,
     })
   }
   save()

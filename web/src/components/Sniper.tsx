@@ -24,6 +24,7 @@ export default function Sniper() {
   const [sl, setSl] = useState('25')
   const [hold, setHold] = useState('30')
   const [trailing, setTrailing] = useState('')
+  const [sweepTo, setSweepTo] = useState<'native' | 'usdt'>('native')
   const [arming, setArming] = useState(false)
   const [armErr, setArmErr] = useState<string | null>(null)
 
@@ -64,6 +65,7 @@ export default function Sniper() {
           tokenSymbol: selected.tokenSymbol,
           tokenName: selected.tokenName,
           budgetUsd: Number(budget),
+          sweepTo,
           sniper: {
             takeProfitPct: Number(tp),
             stopLossPct: Number(sl),
@@ -194,6 +196,12 @@ export default function Sniper() {
                         <label className="block"><span className="text-[11px] text-slate-400">Max hold (min)</span><input className="input !py-1.5 text-xs" type="number" value={hold} onChange={(e) => setHold(e.target.value)} /></label>
                       </div>
                       <label className="block"><span className="text-[11px] text-slate-400">Trailing stop % from peak (optional)</span><input className="input !py-1.5 text-xs" type="number" placeholder="off" value={trailing} onChange={(e) => setTrailing(e.target.value)} /></label>
+                      <label className="block"><span className="text-[11px] text-slate-400">Auto-sell proceeds to</span>
+                        <select className="input !py-1.5 text-xs" value={sweepTo} onChange={(e) => setSweepTo(e.target.value as 'native' | 'usdt')}>
+                          <option value="native">Native coin</option>
+                          <option value="usdt">USDT (stable)</option>
+                        </select>
+                      </label>
                     </div>
 
                     {armErr && <div className="mt-2 rounded-xl bg-rose-500/10 p-2.5 text-xs text-rose-300">{armErr}</div>}

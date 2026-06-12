@@ -244,14 +244,14 @@ const copytrade: Strategy = {
   },
 }
 
-// AI: act on a Claude-generated signal (seeded into ctx.state.aiSignal by the
+// AI: act on a Gemini-generated signal (seeded into ctx.state.aiSignal by the
 // engine). Sizes by confidence × risk tier; exits on opposite signal or stop.
 const ai: Strategy = {
   id: 'ai',
   name: 'AI Trader',
-  tagline: 'Claude decides',
+  tagline: 'Gemini decides',
   description:
-    'Claude analyses recent price action, RSI and moving averages and decides BUY / SELL / HOLD. Position size scales with the model\'s confidence and your risk tier. Requires an Anthropic API key.',
+    'Google Gemini analyses recent price action, RSI and moving averages and decides BUY / SELL / HOLD. Position size scales with the model\'s confidence and your risk tier. Requires a Gemini API key (free tier works).',
   decide(ctx) {
     const guard = slTp(ctx)
     if (guard) return guard

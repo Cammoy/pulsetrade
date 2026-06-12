@@ -9,7 +9,7 @@ import path from 'node:path'
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-engine-'))
 
-const PRICES: Record<string, number> = { ethereum: 2000, chainlink: 10, 'polygon-ecosystem-token': 0.5 }
+const PRICES: Record<string, number> = { ethereum: 2000, chainlink: 10, 'polygon-ecosystem-token': 0.5, tether: 1 }
 
 const { state, monthKey, flushNow } = await import('../src/store.js')
 const { createBot, controlBot, deleteBot, inSchedule, serializeBot, __test } = await import('../src/engine.js')
@@ -89,6 +89,36 @@ test('partial sells: each rung counts a win and basis stays consistent', () => {
   approx(bot.position.qty, halfQty, 'half remains')
   approx(bot.position.costUsd, totalIn / 2, 'half the basis remains')
   assert.ok(bot.position.openedAt !== null, 'position still open')
+})
+
+test('sweepTo usdt: profit sweeps to USDT at the tether price', () => {
+  const bot = freshBot({ sweepTo: 'usdt' })
+  execBuy(bot, 10, 500, 'in')
+  const qty = bot.position.qty
+  execSell(bot, 11, 1, 'out', true)
+  const gross = qty * 11
+  const sellFee = gas + gross * SLIPPAGE
+  const pnl = gross - sellFee - 500
+  approx(bot.stats.nativeTakenUsd, pnl, 'profit swept (USD value)')
+  approx(bot.stats.nativeTakenQty, pnl / PRICES.tether, 'qty in USDT units')
+  assert.equal(state.trades.at(-1)!.sweptNative!.symbol, 'USDT')
+  approx(bot.cashUsd, 1000, 'principal returns to cash')
+})
+
+test('sweepTo usdt: stop & sweep liquidates everything to USDT', () => {
+  const bot = freshBot({ sweepTo: 'usdt' })
+  execBuy(bot, 10, 400, 'in')
+  const qty = bot.position.qty
+  controlBot(bot.id, 'stop')
+  const gross = qty * PRICES.chainlink
+  const fee = gas + gross * SLIPPAGE
+  approx(bot.stats.nativeTakenUsd, gross - fee, 'everything swept')
+  assert.equal(state.trades.at(-1)!.sweptNative!.symbol, 'USDT')
+  assert.equal(bot.status, 'stopped')
+})
+
+test('createBot rejects an invalid sweepTo', () => {
+  assert.ok('error' in createBot({ network: 'base', token: 'LINK', strategy: 'grid', risk: 'balanced', budgetUsd: 100, sweepTo: 'usdc' as any }))
 })
 
 test('stop & sweep: ALL proceeds convert to native and bot stops', () => {

@@ -6,7 +6,7 @@ import path from 'node:path'
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-tourney-'))
 
-const PRICES: Record<string, number> = { ethereum: 2000, chainlink: 10 }
+const PRICES: Record<string, number> = { ethereum: 2000, chainlink: 10, tether: 1 }
 
 const { state } = await import('../src/store.js')
 const { startTournament, endTournament, deleteTournament, serializeTournament, createCopyBot, createAiBot, __test } = await import('../src/engine.js')
@@ -76,6 +76,25 @@ test('endTournament stamps the winner and stops all contestants', () => {
   assert.equal(ended.status, 'ended')
   assert.equal(ended.winnerBotId, bots[0].id)
   assert.ok(state.bots.filter((b) => b.tournamentId === t.id).every((b) => b.status === 'stopped'))
+})
+
+test('tournament with sweepTo usdt: contestants inherit it and ending sells to USDT', () => {
+  const t: any = startTournament({ network: 'base', token: 'LINK', budgetUsd: 1000, contestants, sweepTo: 'usdt' })
+  assert.equal(t.sweepTo, 'usdt')
+  const bots = state.bots.filter((b) => b.tournamentId === t.id)
+  assert.ok(bots.every((b) => b.sweepTo === 'usdt'), 'every contestant sweeps to USDT')
+  // open a position, then end the tournament → liquidation lands in USDT
+  execBuy(bots[0], 10, 400, 'in')
+  endTournament(t.id)
+  const sweep = state.trades.filter((tr) => tr.botId === bots[0].id && tr.sweptNative).at(-1)!
+  assert.equal(sweep.sweptNative!.symbol, 'USDT')
+  assert.ok(state.bots.filter((b) => b.tournamentId === t.id).every((b) => b.status === 'stopped'))
+})
+
+test('tournament defaults to native sweep when unspecified', () => {
+  const t: any = startTournament({ network: 'base', token: 'LINK', budgetUsd: 500, contestants })
+  assert.equal(t.sweepTo, 'native')
+  assert.ok(state.bots.filter((b) => b.tournamentId === t.id).every((b) => b.sweepTo === undefined))
 })
 
 test('deleteTournament removes the tournament and its bots', () => {

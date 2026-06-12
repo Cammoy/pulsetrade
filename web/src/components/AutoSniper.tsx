@@ -12,6 +12,7 @@ export default function AutoSniperPanel() {
   const [sl, setSl] = useState('25')
   const [hold, setHold] = useState('45')
   const [minLiq, setMinLiq] = useState('10000')
+  const [sweepTo, setSweepTo] = useState<'native' | 'usdt'>('native')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -29,6 +30,7 @@ export default function AutoSniperPanel() {
           totalBudgetUsd: Number(total),
           perSnipeUsd: Number(per),
           minLiquidityUsd: Number(minLiq),
+          sweepTo,
           config: { takeProfitPct: Number(tp), stopLossPct: Number(sl), maxHoldMin: Number(hold) },
         }),
       })
@@ -145,6 +147,13 @@ export default function AutoSniperPanel() {
         <label className="block"><span className="mb-1 block text-[11px] text-slate-400">Max hold (min)</span><input className="input !py-2 text-sm" type="number" value={hold} onChange={(e) => setHold(e.target.value)} /></label>
         <label className="block"><span className="mb-1 block text-[11px] text-slate-400">Min liquidity $</span><input className="input !py-2 text-sm" type="number" value={minLiq} onChange={(e) => setMinLiq(e.target.value)} /></label>
       </div>
+
+      <label className="block"><span className="mb-1 block text-[11px] text-slate-400">Auto-sell proceeds to</span>
+        <select className="input !py-2 text-sm" value={sweepTo} onChange={(e) => setSweepTo(e.target.value as 'native' | 'usdt')}>
+          <option value="native">Native coin</option>
+          <option value="usdt">USDT (stable)</option>
+        </select>
+      </label>
 
       <div className="rounded-xl bg-white/[0.03] p-2.5 text-[11px] text-slate-400">
         Will run up to <strong className="text-slate-200">{Math.max(1, Math.floor((Number(total) || 0) / (Number(per) || 1)))}</strong> concurrent snipes

@@ -75,10 +75,10 @@ export default function BotCard({ bot }: { bot: Bot }) {
           <div className="font-medium text-slate-200 tabular-nums">{bot.priceUsd ? fmtPrice(bot.priceUsd) : '—'}</div>
         </div>
         <div className="rounded-lg bg-white/[0.03] px-2 py-1.5">
-          <div className="text-slate-500">Native taken</div>
+          <div className="text-slate-500">Profit taken</div>
           <div className="font-medium text-cyan-300 tabular-nums">
             {bot.stats.nativeTakenQty > 0
-              ? `${bot.stats.nativeTakenQty.toPrecision(3)} ${net?.native.symbol}`
+              ? `${bot.stats.nativeTakenQty.toPrecision(3)} ${bot.sweepTo === 'usdt' ? 'USDT' : net?.native.symbol}`
               : '—'}
           </div>
         </div>
@@ -103,9 +103,9 @@ export default function BotCard({ bot }: { bot: Bot }) {
         {bot.status !== 'stopped' && (
           <button
             className="btn-ghost flex-1 !py-1.5 text-xs text-amber-300"
-            title="Sell everything to native currency and stop"
+            title="Sell everything and stop"
             onClick={() => {
-              if (confirm(`Stop "${bot.name}"? Any open position is sold and swept to ${net?.native.symbol}.`))
+              if (confirm(`Stop "${bot.name}"? Any open position is sold and swept to ${bot.sweepTo === 'usdt' ? 'USDT' : net?.native.symbol}.`))
                 control(bot.id, 'stop')
             }}
           >

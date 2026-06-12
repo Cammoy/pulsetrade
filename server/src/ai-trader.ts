@@ -1,14 +1,17 @@
-// AI trading signals powered by Claude (claude-opus-4-8 via the Anthropic SDK).
+// AI trading signals powered by Google Gemini (gemini-2.5-flash, v1beta REST —
+// no SDK needed). Chosen over other providers to keep AI costs minimal: the
+// free tier covers this usage pattern comfortably.
 //
 // One signal is computed per (network, token) and SHARED by every AI bot on
 // that token, refreshed at most every 10 minutes, so cost stays bounded no
-// matter how many AI bots run. Needs ANTHROPIC_API_KEY; without it AI bots
-// hold and clearly log that the key is missing.
+// matter how many AI bots run. Needs GEMINI_API_KEY; without it AI bots hold
+// and clearly log that the key is missing.
 
-import Anthropic from '@anthropic-ai/sdk'
 import { sma, ema, rsi } from './indicators.js'
 
-export const aiReady = () => Boolean(process.env.ANTHROPIC_API_KEY)
+export const aiReady = () => Boolean(process.env.GEMINI_API_KEY)
+export const AI_PROVIDER = 'gemini'
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
 export interface AiSignal {
   action: 'buy' | 'sell' | 'hold'
@@ -22,22 +25,20 @@ const REFRESH_MS = 10 * 60_000
 const cache = new Map<string, AiSignal>()
 const inflight = new Map<string, Promise<AiSignal | null>>()
 
-let client: Anthropic | null = null
-function anthropic(): Anthropic {
-  if (!client) client = new Anthropic() // reads ANTHROPIC_API_KEY from env
-  return client
-}
+const SYSTEM =
+  'You are a disciplined crypto trading analyst. Given a market snapshot, decide whether to BUY, SELL, or HOLD a swing position over the next several hours. Be risk-aware: prefer HOLD when signals conflict. Respond only with the JSON object: action, confidence (0..1), and a one-sentence reason citing the data.'
 
-const DECISION_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
+// Gemini structured output (OpenAPI-style schema). Note: response schema and
+// tool use cannot be combined on v1beta — we use no tools, so this is fine.
+const RESPONSE_SCHEMA = {
+  type: 'OBJECT',
   properties: {
-    action: { type: 'string', enum: ['buy', 'sell', 'hold'] },
-    confidence: { type: 'number' },
-    reason: { type: 'string' },
+    action: { type: 'STRING', enum: ['buy', 'sell', 'hold'] },
+    confidence: { type: 'NUMBER' },
+    reason: { type: 'STRING' },
   },
   required: ['action', 'confidence', 'reason'],
-} as const
+}
 
 /** Build a compact, factual market summary for the model from recent closes. */
 function marketBrief(symbol: string, closes: number[]): string {
@@ -58,17 +59,34 @@ function marketBrief(symbol: string, closes: number[]): string {
 
 async function requestSignal(symbol: string, closes: number[]): Promise<AiSignal | null> {
   try {
-    const res = await anthropic().messages.create({
-      model: 'claude-opus-4-8',
-      max_tokens: 512,
-      system:
-        'You are a disciplined crypto trading analyst. Given a market snapshot, decide whether to BUY, SELL, or HOLD a swing position over the next several hours. Be risk-aware: prefer HOLD when signals conflict. Respond ONLY with the structured object: action, confidence (0..1), and a one-sentence reason citing the data.',
-      messages: [{ role: 'user', content: marketBrief(symbol, closes) }],
-      output_config: { format: { type: 'json_schema', schema: DECISION_SCHEMA } },
-    } as any)
-    const text = res.content.find((b: any) => b.type === 'text') as any
-    if (!text?.text) return null
-    const parsed = JSON.parse(text.text)
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM }] },
+          contents: [{ role: 'user', parts: [{ text: marketBrief(symbol, closes) }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: RESPONSE_SCHEMA,
+            temperature: 0.2,
+            maxOutputTokens: 1024,
+            // 2.5-flash "thinks" by default, which burns tokens before the JSON
+            // arrives — disable it for this small classification-style call.
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        }),
+      },
+    )
+    if (!res.ok) {
+      console.error(`[ai] gemini request failed: ${res.status} ${(await res.text()).slice(0, 200)}`)
+      return null
+    }
+    const data: any = await res.json()
+    const text = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('')
+    if (!text) return null
+    const parsed = JSON.parse(text)
     const action = ['buy', 'sell', 'hold'].includes(parsed.action) ? parsed.action : 'hold'
     const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0))
     return { action, confidence, reason: String(parsed.reason ?? '').slice(0, 240), at: Date.now() }
@@ -84,7 +102,7 @@ async function requestSignal(symbol: string, closes: number[]): Promise<AiSignal
  * result). Never blocks the engine tick on the network round-trip.
  */
 export function getAiSignal(network: string, symbol: string, closes: number[]): AiSignal | null {
-  if (!aiReady()) return { action: 'hold', confidence: 0, reason: 'ANTHROPIC_API_KEY not set — AI bot holding', at: Date.now(), stale: true }
+  if (!aiReady()) return { action: 'hold', confidence: 0, reason: 'GEMINI_API_KEY not set — AI bot holding', at: Date.now(), stale: true }
   const key = `${network}:${symbol}`
   const cached = cache.get(key)
   const fresh = cached && Date.now() - cached.at < REFRESH_MS

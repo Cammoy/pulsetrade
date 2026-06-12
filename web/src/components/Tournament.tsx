@@ -33,9 +33,13 @@ export function TournamentPanel() {
               {t.status === 'running' ? '● live' : 'ended'}
             </span>
             <span className="text-[11px] text-slate-500">{fmtUsd(t.budgetUsd)} each · {t.standings.length} bots</span>
+            {t.sweepTo === 'usdt' && <span className="chip bg-emerald-500/10 text-emerald-300">ends → USDT</span>}
+            {t.endsAt && t.status === 'running' && (
+              <span className="text-[11px] text-slate-500">auto-ends {new Date(t.endsAt).toLocaleString()}</span>
+            )}
             <div className="ml-auto flex gap-1.5">
               {t.status === 'running' && (
-                <button className="btn-ghost !py-1 text-xs text-amber-300" onClick={() => { if (confirm('End tournament and liquidate all contestants to native?')) end(t.id) }}>
+                <button className="btn-ghost !py-1 text-xs text-amber-300" onClick={() => { if (confirm(`End tournament and liquidate all contestants to ${t.sweepTo === 'usdt' ? 'USDT' : 'native'}?`)) end(t.id) }}>
                   End now
                 </button>
               )}
@@ -82,6 +86,7 @@ export function TournamentModal() {
   const [token, setToken] = useState('')
   const [budget, setBudget] = useState('500')
   const [duration, setDuration] = useState('')
+  const [sweepTo, setSweepTo] = useState<'native' | 'usdt'>('native')
   const [picked, setPicked] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -99,7 +104,7 @@ export function TournamentModal() {
     try {
       const r = await fetch('/api/tournaments', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ network, token: token || net?.tokens[0]?.symbol, budgetUsd: Number(budget), contestants, durationHours: duration ? Number(duration) : undefined }),
+        body: JSON.stringify({ network, token: token || net?.tokens[0]?.symbol, budgetUsd: Number(budget), contestants, durationHours: duration ? Number(duration) : undefined, sweepTo }),
       })
       const data = await r.json()
       if (data.error) setErr(data.error)
@@ -135,6 +140,12 @@ export function TournamentModal() {
           </label>
           <label className="block"><span className="mb-1 block text-xs text-slate-400">Auto-end (hrs)</span>
             <input className="input !py-2" type="number" placeholder="open" value={duration} onChange={(e) => setDuration(e.target.value)} />
+          </label>
+          <label className="block sm:col-span-2"><span className="mb-1 block text-xs text-slate-400">On end, sell everything to</span>
+            <select className="input !py-2" value={sweepTo} onChange={(e) => setSweepTo(e.target.value as 'native' | 'usdt')}>
+              <option value="native">Native coin ({net?.native.symbol ?? 'ETH'})</option>
+              <option value="usdt">USDT (stable)</option>
+            </select>
           </label>
         </div>
 

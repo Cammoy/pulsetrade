@@ -9,7 +9,7 @@ tour (the **?** button) walks new users through the highlights.
 
 PulseTrade runs automated trading bots on five low-fee networks. Bots place
 buys and sells for you continuously and take profit in each chain's **native
-coin** (ETH, BNB or POL), so you never end up stuck holding an illiquid token.
+coin** (ETH, BNB or POL) — or in **USDT** if you prefer dollars (every bot has an 'auto-sell profits to' setting), so you never end up stuck holding an illiquid token.
 
 ### Paper vs Live
 

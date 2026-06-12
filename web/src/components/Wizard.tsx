@@ -56,6 +56,7 @@ export default function Wizard() {
   const [risk, setRisk] = useState<'conservative' | 'balanced' | 'aggressive'>('balanced')
   const [budget, setBudget] = useState('1000')
   const [name, setName] = useState('')
+  const [sweepTo, setSweepTo] = useState<'native' | 'usdt'>('native')
   const [always, setAlways] = useState(true)
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5])
   const [startHour, setStartHour] = useState(8)
@@ -109,6 +110,7 @@ export default function Wizard() {
       risk,
       budgetUsd: Number(budget),
       schedule: { enabled: !always, days, startHour, endHour },
+      sweepTo,
     })
     setLaunching(false)
     if (out.error) return setErr(out.error)
@@ -277,6 +279,13 @@ export default function Wizard() {
                 <label className="block">
                   <span className="mb-1 block text-xs font-medium text-slate-400">Bot name (optional)</span>
                   <input className="input" placeholder={`${token || 'COIN'} bot`} value={name} onChange={(e) => setName(e.target.value)} />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="mb-1 block text-xs font-medium text-slate-400">Auto-sell profits to</span>
+                  <select className="input" value={sweepTo} onChange={(e) => setSweepTo(e.target.value as 'native' | 'usdt')}>
+                    <option value="native">Native coin ({net?.native.symbol ?? 'ETH'}) — default</option>
+                    <option value="usdt">USDT (stable) — profits & stop-sweeps land in dollars</option>
+                  </select>
                 </label>
               </div>
               <p className="mt-2 text-[11px] text-slate-500">

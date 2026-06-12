@@ -41,6 +41,9 @@ export interface CopyConfig {
   walletLabel: string
 }
 
+/** Where sweeps (profits, stop-liquidations) are converted to. */
+export type SweepTarget = 'native' | 'usdt'
+
 export interface Bot {
   id: string
   name: string
@@ -58,6 +61,7 @@ export interface Bot {
   tournamentId?: string // competing in a tournament
   copy?: CopyConfig // present ⇒ copy-trades a tracked wallet
   ai?: boolean // present ⇒ AI-driven strategy
+  sweepTo?: SweepTarget // where profits / stop-sweeps land (default 'native')
   riskReport?: unknown // safety screen captured at creation
   position: Position
   state: Record<string, any> // per-strategy scratch state
@@ -113,6 +117,7 @@ export interface AutoSniper {
   perSnipeUsd: number
   maxConcurrent: number
   config: SniperConfig
+  sweepTo?: SweepTarget
   minLiquidityUsd: number
   tried: string[] // token addresses already attempted (never re-snipe)
   startedAt: number
@@ -129,6 +134,7 @@ export interface Tournament {
   status: 'running' | 'ended'
   createdAt: number
   endsAt: number | null // auto-end time, or null for open-ended
+  sweepTo: SweepTarget // on end, contestants liquidate to this
   winnerBotId: string | null
 }
 
