@@ -21,12 +21,20 @@ async function getJson(url: string, ms = 8000): Promise<any | null> {
 }
 
 async function fetchGoPlus(chainId: number, address: string): Promise<Record<string, any> | null> {
-  const data = await getJson(`https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${address.toLowerCase()}`)
+  const map = await batchGoPlus(chainId, [address])
+  return map.get(address.toLowerCase()) ?? null
+}
+
+/** One GoPlus call for many tokens — used to screen a whole discovery feed. */
+export async function batchGoPlus(chainId: number, addresses: string[]): Promise<Map<string, Record<string, any>>> {
+  const out = new Map<string, Record<string, any>>()
+  if (!addresses.length) return out
+  const list = addresses.map((a) => a.toLowerCase()).join(',')
+  const data = await getJson(`https://api.gopluslabs.io/api/v1/token_security/${chainId}?contract_addresses=${list}`, 12000)
   const result = data?.result
-  if (!result) return null
-  // keys are lowercased addresses
-  const key = Object.keys(result).find((k) => k.toLowerCase() === address.toLowerCase())
-  return key ? result[key] : null
+  if (!result) return out
+  for (const [k, v] of Object.entries<any>(result)) out.set(k.toLowerCase(), v)
+  return out
 }
 
 async function fetchHoneypot(chainId: number, address: string): Promise<Record<string, any> | null> {
@@ -57,6 +65,28 @@ export async function screenAddress(network: string, address: string, symbol?: s
 
   const [gp, hp] = await Promise.all([fetchGoPlus(net.chainId, address), fetchHoneypot(net.chainId, address)])
   const report = assess({ network: net.id, chainId: net.chainId, token: symbol ?? address }, gp, hp)
+  cache.set(cacheKey, { at: Date.now(), report })
+  return report
+}
+
+/**
+ * Screen with an already-fetched GoPlus payload (from a batch call) — only the
+ * honeypot.is leg is fetched. Caches into the same report cache so a later
+ * screenAddress() (e.g. inside createSniper) is served instantly.
+ */
+export async function screenPrefetched(
+  network: string,
+  address: string,
+  symbol: string,
+  gp: Record<string, any> | null,
+): Promise<RiskReport> {
+  const net = networkById(network)
+  if (!net) return screenAddress(network, address, symbol) // delegates to error path
+  const cacheKey = `${net.chainId}:${address.toLowerCase()}`
+  const hit = cache.get(cacheKey)
+  if (hit && Date.now() - hit.at < TTL) return hit.report
+  const hp = await fetchHoneypot(net.chainId, address)
+  const report = assess({ network: net.id, chainId: net.chainId, token: symbol }, gp, hp)
   cache.set(cacheKey, { at: Date.now(), report })
   return report
 }

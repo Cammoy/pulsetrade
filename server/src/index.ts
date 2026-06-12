@@ -6,11 +6,11 @@ import { state, save } from './store.js'
 import { NETWORKS } from './networks.js'
 import { STRATEGIES } from './strategies.js'
 import { RISK } from './risk.js'
-import { startEngine, createBot, createSniper, controlBot, deleteBot, serializeBot, trimTrades } from './engine.js'
+import { startEngine, createBot, createSniper, controlBot, deleteBot, serializeBot, trimTrades, startAutoSniper, stopAutoSniper, autoSniperStats } from './engine.js'
 import { backtest, profitFinder } from './backtest.js'
 import { liveReady, botWalletAddress } from './live.js'
 import { screenToken, screenAddress } from './screen-fetch.js'
-import { discoverPools } from './sniper.js'
+import { discoverSafePools } from './sniper.js'
 
 const app = express()
 app.use(cors())
@@ -32,6 +32,7 @@ app.get('/api/state', (_req, res) => {
     bots: state.bots.map(serializeBot),
     trades: state.trades.slice(-500).reverse(),
     monthly: state.monthly,
+    autoSniper: state.autoSniper ? { ...state.autoSniper, tried: undefined, stats: autoSniperStats() } : null,
     mode: state.settings.mode,
   })
 })
@@ -51,17 +52,29 @@ app.post('/api/screen', async (req, res) => {
   res.json(await screenAddress(network, address, symbol))
 })
 
-// ── Sniper ───────────────────────────────────────────────────────────────────
+// ── Sniper (safe-only feed: verified · sellable · distributed holders) ──────
 app.get('/api/sniper/pools', async (req, res) => {
   const network = String(req.query.network ?? 'base')
   const mode = req.query.mode === 'trending' ? 'trending' : 'new'
-  res.json(await discoverPools(network, mode))
+  res.json(await discoverSafePools(network, mode))
 })
 
 app.post('/api/sniper', async (req, res) => {
   const out = await createSniper(req.body ?? {})
   if ('error' in out) return res.status(400).json(out)
   res.json(serializeBot(out))
+})
+
+// ── Auto-Sniper ──────────────────────────────────────────────────────────────
+app.post('/api/auto-sniper', (req, res) => {
+  const out = startAutoSniper(req.body ?? {})
+  if (out && 'error' in out) return res.status(400).json(out)
+  res.json({ ...out, tried: undefined, stats: autoSniperStats() })
+})
+
+app.post('/api/auto-sniper/stop', (req, res) => {
+  const out = stopAutoSniper(Boolean(req.body?.liquidate))
+  res.json(out ? { ...out, tried: undefined, stats: autoSniperStats() } : null)
 })
 
 app.post('/api/profit-finder', async (req, res) => {

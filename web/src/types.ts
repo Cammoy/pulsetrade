@@ -168,6 +168,24 @@ export interface PoolCandidate {
   dex: string | null
 }
 
+export interface SafePool extends PoolCandidate {
+  report: RiskReport
+}
+
+export interface AutoSniperState {
+  enabled: boolean
+  network: string
+  mode: 'new' | 'trending'
+  totalBudgetUsd: number
+  poolUsd: number
+  perSnipeUsd: number
+  maxConcurrent: number
+  config: { takeProfitPct: number; stopLossPct: number; maxHoldMin: number; trailingPct?: number }
+  minLiquidityUsd: number
+  startedAt: number
+  stats: { active: number; completed: number; realizedUsd: number; nativeTakenUsd: number; wins: number; losses: number }
+}
+
 export interface BacktestResult {
   days: number
   trades: number

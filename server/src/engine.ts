@@ -9,13 +9,14 @@
 // - a manual stop sweeps ALL proceeds to native
 // - every fill updates the persistent monthly ledger (state.monthly)
 
-import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type PoolRef } from './store.js'
+import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State } from './store.js'
 import { networkById, tokenOf, allPriceIds } from './networks.js'
 import { getSpotPrices, getCandles, spot, poolPrice, refreshPoolPrice } from './prices.js'
 import { strategyById, type Ctx } from './strategies.js'
 import { RISK } from './risk.js'
 import { liveReady, executeSwap } from './live.js'
 import { screenAddress } from './screen-fetch.js'
+import { discoverSafePools } from './sniper.js'
 import { parseUnits } from 'viem'
 
 const TICK_MS = 20_000
@@ -258,13 +259,18 @@ async function tick() {
     }
     await Promise.all([...pools.values()].map((p) => refreshPoolPrice(p.gt, p.addr)))
     await Promise.all(state.bots.map((b) => tickBot(b).catch((e) => console.error(`[engine] bot ${b.name}:`, e))))
+    await autoScan().catch((e) => console.error('[engine] auto-sniper scan failed', e))
     save()
     const prices: Record<string, number> = {}
     for (const id of allPriceIds()) {
       const p = spot(id)
       if (p) prices[id] = p
     }
-    broadcast({ type: 'snapshot', ts: Date.now(), bots: state.bots.map(serializeBot), prices, monthly: state.monthly })
+    broadcast({
+      type: 'snapshot', ts: Date.now(), bots: state.bots.map(serializeBot), prices,
+      monthly: state.monthly,
+      autoSniper: state.autoSniper ? { ...state.autoSniper, tried: undefined, stats: autoSniperStats() } : null,
+    })
   } catch (e) {
     console.error('[engine] tick failed', e)
   } finally {
@@ -345,6 +351,7 @@ export async function createSniper(input: {
   decimals?: number
   budgetUsd: number
   sniper: SniperConfig
+  auto?: boolean
 }): Promise<(Bot & { riskReport: unknown }) | { error: string; riskReport?: unknown }> {
   const net = networkById(input.network)
   if (!net) return { error: 'unknown network' }
@@ -367,7 +374,7 @@ export async function createSniper(input: {
 
   const bot: Bot = {
     id: uid(),
-    name: `🎯 ${input.tokenSymbol} snipe`,
+    name: `${input.auto ? '🤖' : ''}🎯 ${input.tokenSymbol} snipe`,
     network: net.id,
     token: input.tokenSymbol,
     strategy: 'sniper',
@@ -378,6 +385,7 @@ export async function createSniper(input: {
     schedule: { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 },
     pool: { poolAddress: input.poolAddress, tokenAddress: input.tokenAddress, decimals: input.decimals ?? 18 },
     sniper: s,
+    auto: input.auto || undefined,
     riskReport: report,
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
@@ -391,6 +399,121 @@ export async function createSniper(input: {
   state.bots.push(bot)
   save()
   return bot as Bot & { riskReport: unknown }
+}
+
+// ── Auto-Sniper ──────────────────────────────────────────────────────────────
+// Give it a budget; it scans the safe-only feed, snipes vetted tokens up to
+// maxConcurrent at perSnipeUsd each, and recycles returned cash into new
+// snipes. Profits accumulate in native via the normal sweep.
+
+const AUTO_SCAN_MS = 90_000
+
+/** Reclaim cash from finished auto-snipes, then (rate-limited) scan + spawn. */
+export async function autoScan(now = Date.now()): Promise<void> {
+  const a = state.autoSniper
+  if (!a) return
+
+  // Always reclaim finished snipes, even when disabled — money comes home.
+  for (const b of state.bots) {
+    if (b.auto && b.status === 'stopped' && !b.state.reclaimedByAuto) {
+      b.state.reclaimedByAuto = true
+      a.poolUsd += b.cashUsd
+    }
+  }
+
+  if (!a.enabled) return
+  if (now - a.lastScanAt < AUTO_SCAN_MS) return
+  a.lastScanAt = now
+
+  let active = state.bots.filter((b) => b.auto && b.status !== 'stopped').length
+  if (active >= a.maxConcurrent || a.poolUsd < a.perSnipeUsd) return
+
+  const { pools } = await discoverSafePools(a.network, a.mode, now, { minLiquidityUsd: a.minLiquidityUsd })
+  for (const p of pools) {
+    if (active >= a.maxConcurrent || a.poolUsd < a.perSnipeUsd) break
+    const key = p.tokenAddress.toLowerCase()
+    if (a.tried.includes(key)) continue
+    a.tried.push(key)
+    if (a.tried.length > 500) a.tried.splice(0, a.tried.length - 500)
+    const out = await createSniper({
+      network: a.network,
+      poolAddress: p.poolAddress,
+      tokenAddress: p.tokenAddress,
+      tokenSymbol: p.tokenSymbol,
+      tokenName: p.tokenName,
+      budgetUsd: a.perSnipeUsd,
+      sniper: a.config,
+      auto: true,
+    })
+    if (!('error' in out)) {
+      a.poolUsd -= a.perSnipeUsd
+      active++
+    }
+  }
+  save()
+}
+
+export function startAutoSniper(input: {
+  network: string
+  mode?: 'new' | 'trending'
+  totalBudgetUsd: number
+  perSnipeUsd: number
+  maxConcurrent?: number
+  config: SniperConfig
+  minLiquidityUsd?: number
+}): { error: string } | State['autoSniper'] {
+  if (state.autoSniper?.enabled) return { error: 'Auto-Sniper is already running — stop it first' }
+  if (!networkById(input.network)) return { error: 'unknown network' }
+  const total = Number(input.totalBudgetUsd)
+  const per = Number(input.perSnipeUsd)
+  if (!Number.isFinite(total) || total < 10) return { error: 'budget must be at least $10' }
+  if (!Number.isFinite(per) || per < 10 || per > total) return { error: 'per-snipe must be ≥ $10 and ≤ the total budget' }
+  const c = input.config
+  if (!(c.takeProfitPct > 0) || !(c.stopLossPct > 0) || !(c.maxHoldMin > 0))
+    return { error: 'auto-sniper needs positive take-profit, stop-loss and max-hold' }
+  const maxConcurrent = Math.max(1, Math.min(10, Math.floor(input.maxConcurrent ?? Math.floor(total / per))))
+  state.autoSniper = {
+    enabled: true,
+    network: input.network,
+    mode: input.mode === 'trending' ? 'trending' : 'new',
+    totalBudgetUsd: total,
+    poolUsd: total,
+    perSnipeUsd: per,
+    maxConcurrent,
+    config: c,
+    minLiquidityUsd: Math.max(0, Number(input.minLiquidityUsd) || 10_000),
+    tried: state.autoSniper?.tried ?? [],
+    startedAt: Date.now(),
+    lastScanAt: 0,
+  }
+  save()
+  return state.autoSniper
+}
+
+export function stopAutoSniper(liquidate: boolean): State['autoSniper'] {
+  const a = state.autoSniper
+  if (!a) return null
+  a.enabled = false
+  if (liquidate) {
+    for (const b of state.bots) {
+      if (b.auto && b.status !== 'stopped') controlBot(b.id, 'stop')
+    }
+  }
+  save()
+  return a
+}
+
+/** Aggregate live stats for the autopilot's bots (active + retired). */
+export function autoSniperStats() {
+  const bots = state.bots.filter((b) => b.auto)
+  return {
+    active: bots.filter((b) => b.status !== 'stopped').length,
+    completed: bots.filter((b) => b.status === 'stopped').length,
+    realizedUsd: +bots.reduce((s, b) => s + b.stats.realizedUsd, 0).toFixed(2),
+    nativeTakenUsd: +bots.reduce((s, b) => s + b.stats.nativeTakenUsd, 0).toFixed(2),
+    wins: bots.reduce((s, b) => s + b.stats.wins, 0),
+    losses: bots.reduce((s, b) => s + b.stats.losses, 0),
+  }
 }
 
 export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot | { error: string } {

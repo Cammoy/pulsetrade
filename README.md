@@ -49,9 +49,13 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 
 - 🧭 **Guided onboarding** — a first-run tour (replayable via the `?` button) plus full in-app
   documentation (`📖 Docs`) and a standalone [DOCS.md](DOCS.md)
-- 🎯 **Sniper** — live feed of freshly created / trending pools (GeckoTerminal); pick one, it’s
-  screened, then a one-shot snipe bot enters instantly and exits on take-profit / stop-loss /
-  trailing stop / max-hold, sweeping to native and retiring itself
+- 🎯 **Sniper (safe-only)** — shows only coins that are **verified, proven sellable, and held by
+  many distinct wallets** (no whale/top-10 EOA dominance); pick one and a one-shot snipe bot
+  enters instantly and exits on take-profit / stop-loss / trailing stop / max-hold, sweeping to
+  native and retiring itself
+- 🤖 **Auto-Sniper** — give it a budget; it autonomously scans the safe-only feed, snipes
+  multiple vetted coins concurrently (up to a limit), takes profit, and recycles returns into
+  new snipes. Live P&L/budget stats; stop or liquidate any time
 - 🛡️ **Pre-trade risk screening** — every token screened via GoPlus Security + honeypot.is for
   honeypots, non-sellable contracts, rug-pull setups, exit traps and owner controls; scored
   0–100 with named flags. A **hard, no-override block** for the Sniper; advisory in the wizard
@@ -101,10 +105,13 @@ the monthly ledger (including the legacy-state rebuild), backtester invariants o
 ranging/crashing markets, the Profit Finder ranking, **the risk-screen scoring (honeypots,
 non-sellable, rug setups, tax traps, owner controls, provider redundancy and the
 trade-blind refusal), the sniper strategy (instant entry; TP/SL/trailing/max-hold exits;
-one-shot), pool discovery mapping, and createSniper's mandatory no-override safety gate**,
-input validation, and crash-safe persistence (atomic writes, corrupt-file fallback). No
-network access — all providers are mocked at the fetch layer; the same `decide()` code
-paths run in tests, backtests and live.
+one-shot), pool discovery mapping, createSniper's mandatory no-override safety gate, the
+**safe-only feed hard filter** (verified · sellable · distributed holders, with infra/burn
+wallets exempted from dominance) and the **Auto-Sniper** (concurrent vetted snipes, no
+repeats, budget debit + cash reclaim, rate-limited scan, stop/liquidate)**, input
+validation, and crash-safe persistence (atomic writes, corrupt-file fallback). No network
+access — all providers are mocked at the fetch layer; the same `decide()` code paths run in
+tests, backtests and live.
 
 ## Architecture
 

@@ -69,10 +69,23 @@ returns.
 
 ## 5. Sniper
 
-The Sniper surfaces freshly created and trending liquidity pools across the
-supported networks. Selecting a token runs a **mandatory safety screen**; if it
-passes, you set a budget plus take-profit, stop-loss, max-hold time and an
-optional trailing stop, then snipe.
+The Sniper shows **only safe coins**. It scans freshly created and trending
+pools, then displays only those that are **verified (open-source), proven
+sellable (passes a live sell-simulation), and held by many distinct wallets**
+with no single-wallet or top-10 EOA dominance — everything else is filtered out
+before you see it. (DEX pools, bridges, lockers and burn addresses don't count
+as "whales" — only real end-user wallets do.) Selecting a coin shows its full
+screen; you then set a budget plus take-profit, stop-loss, max-hold time and an
+optional trailing stop, and snipe.
+
+### Auto-Sniper
+
+Hand the Auto-Sniper a total budget and a per-snipe size. It continuously scans
+the same safe-only feed and snipes vetted coins on its own — up to a concurrency
+limit — taking profit and **recycling returned cash into new snipes**. Live
+stats show total P&L, profit taken in native, active snipes and budget deployed.
+Stop it any time (optionally liquidating all open snipes to native). Every
+auto-snipe still passes the full safety screen; nothing is bought blind.
 
 **Behaviour:** buys the full budget immediately, then exits the entire position
 on the first of take-profit, stop-loss, trailing stop, or max-hold timeout —

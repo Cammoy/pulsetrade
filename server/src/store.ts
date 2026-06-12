@@ -48,6 +48,7 @@ export interface Bot {
   schedule: { enabled: boolean; days: number[]; startHour: number; endHour: number }
   pool?: PoolRef // present ⇒ priced from GeckoTerminal, not CoinGecko
   sniper?: SniperConfig // present ⇒ snipe bot
+  auto?: boolean // spawned by the Auto-Sniper
   riskReport?: unknown // safety screen captured at creation
   position: Position
   state: Record<string, any> // per-strategy scratch state
@@ -93,14 +94,31 @@ export interface MonthlyPnl {
   byRisk: Record<string, number> // realized P&L per risk tolerance
 }
 
+/** Auto-Sniper: a budget pool that autonomously snipes vetted new tokens. */
+export interface AutoSniper {
+  enabled: boolean
+  network: string
+  mode: 'new' | 'trending'
+  totalBudgetUsd: number
+  poolUsd: number // un-allocated budget remaining
+  perSnipeUsd: number
+  maxConcurrent: number
+  config: SniperConfig
+  minLiquidityUsd: number
+  tried: string[] // token addresses already attempted (never re-snipe)
+  startedAt: number
+  lastScanAt: number
+}
+
 export interface State {
   bots: Bot[]
   trades: Trade[]
   monthly: Record<string, MonthlyPnl> // key: YYYY-MM (local time)
+  autoSniper: AutoSniper | null
   settings: { mode: 'paper' | 'live' }
 }
 
-const empty: State = { bots: [], trades: [], monthly: {}, settings: { mode: 'paper' } }
+const empty: State = { bots: [], trades: [], monthly: {}, autoSniper: null, settings: { mode: 'paper' } }
 
 export function monthKey(ts: number): string {
   const d = new Date(ts)
