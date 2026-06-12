@@ -61,8 +61,32 @@ const SECTIONS: Section[] = [
     title: 'Profit Finder',
     body: (
       <>
-        <P>Open <B>Profit Finder</B>, enter a stake (e.g. $100) and pick a network. It backtests every strategy × risk tolerance × coin on that network over the same real 30-day history — including gas and slippage — and ranks the outcomes by profit.</P>
-        <P>The top result is your best historical configuration for that stake; one click launches it with that exact setup. Results are evidence, not a guarantee — past performance never assures future returns.</P>
+        <P>Open <B>Profit Finder</B>, enter a stake (e.g. $100), and choose a scope. It backtests every strategy × risk tolerance over the same real history — including gas and slippage — and ranks the outcomes by profit.</P>
+        <H>Three scopes</H>
+        <ul className="mb-3 ml-4 list-disc space-y-1.5">
+          <LI><B>Curated</B> — every coin on one network.</LI>
+          <LI><B>Top-100 movers</B> — the strongest 24h gainers among the top-100 coins by market cap. Curated ones launch in one click (e.g. JUP on its Solana home); the rest are shown <B>watch-only</B> for insight.</LI>
+          <LI><B>Trending (safe)</B> — trending pools that pass the full safety screen, backtested on their real pool candles and launchable as screened snipes.</LI>
+        </ul>
+        <P>The top result is your best historical configuration for that stake. Results are evidence, not a guarantee — past performance never assures future returns. The top-100 scan is paced for the free data tier, so it can take a minute or two.</P>
+      </>
+    ),
+  },
+  {
+    id: 'smart-money',
+    title: 'Smart money & following',
+    body: (
+      <>
+        <P>The <B>🐋 Smart Money</B> panel tracks wallets and lets you trade alongside them. It ships with a permanent watchlist of publicly documented wallets (Wintermute, DWF Labs, machibigbrother.eth, James Fickel, gcr.eth, …) and you can add your own.</P>
+        <H>Three tabs</H>
+        <ul className="mb-3 ml-4 list-disc space-y-1.5">
+          <LI><B>Activity</B> — a live feed of tracked wallets’ buys and sells of curated tokens, per network. Hit <B>Copy</B> on any row to mirror that one token manually.</LI>
+          <LI><B>Accounts</B> — open any wallet for its trading history: totals, a cumulative net-flow chart, and a per-token breakdown of buys, sells, volume and net flow.</LI>
+          <LI><B>Watchlist</B> — add or remove wallets by address.</LI>
+        </ul>
+        <H>Trading with an account</H>
+        <P><B>Manually</B>: pick one token and launch a copy bot that mirrors that wallet’s entries and exits in that token. <B>Automatically</B>: from an account’s detail view, hand it a budget and a per-trade size — whenever the wallet buys <em>any</em> curated token, a mirror bot enters with your size and exits when the wallet sells (plus your risk-tier stops). Returns recycle into the next mirror, up to a concurrency limit. Stop or liquidate any time.</P>
+        <P>Live wallet data needs a free <code className="rounded bg-white/10 px-1 py-0.5 text-xs">ETHERSCAN_API_KEY</code>; the watchlist and follow setup work without it and act once tracking is enabled. Wallet tracking is EVM-only.</P>
       </>
     ),
   },
@@ -112,12 +136,13 @@ const SECTIONS: Section[] = [
     body: (
       <>
         <H>Enabling live trading</H>
-        <ul className="mb-3 ml-4 list-decimal space-y-1.5">
-          <LI>Create a <B>dedicated</B> bot wallet — never your main wallet — and fund it with only what the bot may trade.</LI>
-          <LI>Get a free API key at 0x.org.</LI>
-          <LI>Set <code className="rounded bg-white/10 px-1 py-0.5 text-xs">ZEROX_API_KEY</code> and <code className="rounded bg-white/10 px-1 py-0.5 text-xs">BOT_WALLET_KEY</code> in <code className="rounded bg-white/10 px-1 py-0.5 text-xs">server/.env</code>, restart, and flip the header toggle to Live.</LI>
+        <P>Use a <B>dedicated</B> bot wallet per chain — never your main wallet — and fund it with only what the bot may trade. Configure the chains you want, restart, then flip the header toggle to Live. Live mode activates if <em>any</em> chain’s keys are set; bots on unconfigured chains keep trading in paper.</P>
+        <ul className="mb-3 ml-4 list-disc space-y-1.5">
+          <LI><B>EVM chains (Base, Arbitrum, Optimism, Polygon, BNB)</B> — set <code className="rounded bg-white/10 px-1 py-0.5 text-xs">ZEROX_API_KEY</code> (free at 0x.org) and <code className="rounded bg-white/10 px-1 py-0.5 text-xs">BOT_WALLET_KEY</code>. Swaps route through the 0x API with a 1% slippage cap.</LI>
+          <LI><B>Solana</B> — set <code className="rounded bg-white/10 px-1 py-0.5 text-xs">SOLANA_WALLET_KEY</code> (a base58 secret key for a dedicated Solana wallet) and optionally <code className="rounded bg-white/10 px-1 py-0.5 text-xs">SOLANA_RPC_URL</code>. Swaps route through the Jupiter aggregator.</LI>
+          <LI><B>Internet Computer (ICP)</B> — trades live-price in paper for now. KongSwap and ICPSwap are canister-only DEXes with no REST API, so the on-chain executor is pending a verified canister integration.</LI>
         </ul>
-        <P>Live swaps go through the 0x API with a 1% slippage cap; paper accounting continues in parallel as the source of truth for P&L.</P>
+        <P>Paper accounting continues in parallel as the source of truth for P&L. Sniping and wallet tracking remain EVM-only.</P>
         <P className="rounded-xl bg-amber-500/10 p-3 text-amber-200">Nothing here is financial advice. Backtested performance does not guarantee future results. Crypto is volatile and you can lose money — only trade what you can afford to lose.</P>
       </>
     ),

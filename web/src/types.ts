@@ -44,7 +44,13 @@ export interface Meta {
   networks: Network[]
   strategies: StrategyMeta[]
   risk: Record<string, RiskParams>
-  live: { ready: boolean; botWallet: string | null }
+  live: {
+    ready: boolean
+    botWallet: string | null
+    evm?: { ready: boolean; wallet: string | null }
+    solana?: { ready: boolean; wallet: string | null }
+    icp?: { ready: boolean; reason: string }
+  }
   features: { ai: boolean; walletTracking: boolean }
   copyTokens: { network: string; name: string; tokens: string[] }[]
   mode: 'paper' | 'live'
@@ -67,6 +73,51 @@ export interface SmartMoneyEvent {
   usd: number | null
   ts: number
   txHash: string
+}
+
+export interface WalletTokenStat {
+  network: string
+  token: string
+  buys: number
+  sells: number
+  volumeUsd: number
+  netFlowUsd: number
+  lastTs: number
+}
+
+export interface WalletStats {
+  trades: number
+  buys: number
+  sells: number
+  volumeUsd: number
+  netFlowUsd: number
+  firstTs: number | null
+  lastTs: number | null
+  tokens: WalletTokenStat[]
+  series: { t: number; v: number }[]
+}
+
+export interface WalletProfile {
+  wallet: string
+  label: string
+  tracking: boolean
+  events: SmartMoneyEvent[]
+  stats: WalletStats
+}
+
+export interface Follow {
+  id: string
+  walletAddress: string
+  label: string
+  totalBudgetUsd: number
+  poolUsd: number
+  perTradeUsd: number
+  maxConcurrent: number
+  risk: string
+  sweepTo?: 'native' | 'usdt'
+  enabled: boolean
+  startedAt: number
+  stats: { active: number; completed: number; realizedUsd: number; sweptUsd: number; wins: number; losses: number }
 }
 
 export interface TournamentStanding {

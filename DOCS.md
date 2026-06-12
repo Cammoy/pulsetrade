@@ -138,16 +138,42 @@ independent of the trade list, so it survives trade trimming and bot deletion.
 
 ---
 
-## 8. Going live & safety
+## 8. Smart money & following
 
-1. Create a **dedicated** bot wallet — never your main wallet — and fund it with
-   only what the bot may trade.
-2. Get a free API key at [0x.org](https://0x.org/docs).
-3. Set `ZEROX_API_KEY` and `BOT_WALLET_KEY` in `server/.env`, restart, and flip
-   the header toggle to **Live**.
+The **🐋 Smart Money** panel tracks wallets and lets you trade alongside them.
+It ships with a permanent watchlist of publicly documented wallets (Wintermute,
+DWF Labs, machibigbrother.eth, James Fickel, gcr.eth, …); add your own too.
 
-Live swaps go through the 0x API with a 1% slippage cap; paper accounting
-continues in parallel as the source of truth for P&L.
+- **Activity** — live feed of tracked wallets' buys/sells of curated tokens, per
+  network. Hit **Copy** on a row to mirror that one token manually.
+- **Accounts** — open any wallet for its trading history: totals, a cumulative
+  net-flow chart, and a per-token breakdown of buys, sells, volume and net flow.
+- **Watchlist** — add/remove wallets by address.
+
+**Trade with an account.** *Manually:* a copy bot mirrors the wallet's entries
+and exits in one token. *Automatically:* from the account view, hand it a budget
+and per-trade size — every curated-token buy spawns a mirror that exits when the
+wallet sells (plus your risk-tier stops); returns recycle into the next mirror,
+up to a concurrency limit. Live wallet data needs `ETHERSCAN_API_KEY`; setup
+works without it. Wallet tracking is EVM-only.
+
+## 9. Going live & safety
+
+Use a **dedicated** bot wallet per chain — never your main wallet — funded with
+only what the bot may trade. Live mode activates if *any* chain's keys are set;
+bots on unconfigured chains keep trading in paper.
+
+- **EVM (Base, Arbitrum, Optimism, Polygon, BNB)** — set `ZEROX_API_KEY` (free at
+  [0x.org](https://0x.org/docs)) and `BOT_WALLET_KEY`. Swaps route via 0x (1%
+  slippage cap).
+- **Solana** — set `SOLANA_WALLET_KEY` (base58 secret key) and optionally
+  `SOLANA_RPC_URL`. Swaps route via the Jupiter aggregator.
+- **ICP** — live-price paper for now; KongSwap/ICPSwap are canister-only DEXes
+  with no REST API, so the on-chain executor is pending.
+
+Restart and flip the header toggle to **Live**. Paper accounting continues in
+parallel as the source of truth for P&L. Sniping and wallet tracking are
+EVM-only.
 
 > Nothing here is financial advice. Backtested performance does not guarantee
 > future results. Crypto is volatile and you can lose money — only trade what you

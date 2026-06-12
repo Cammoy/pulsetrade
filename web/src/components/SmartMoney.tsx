@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import type { SmartMoneyEvent, TrackedWallet } from '../types'
 import { fmtUsd, timeAgo } from '../format'
+import WalletAccount from './WalletAccount'
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 export default function SmartMoney() {
-  const { meta, openSmartMoney, refresh, mode } = useStore()
-  const [tab, setTab] = useState<'feed' | 'watchlist'>('feed')
+  const { meta, openSmartMoney, refresh, mode, follows } = useStore()
+  const [tab, setTab] = useState<'feed' | 'accounts' | 'watchlist'>('feed')
+  const [account, setAccount] = useState<string | null>(null) // open wallet detail
   const [network, setNetwork] = useState('base')
   const [events, setEvents] = useState<SmartMoneyEvent[]>([])
   const [needsKey, setNeedsKey] = useState(false)
@@ -87,13 +89,15 @@ export default function SmartMoney() {
 
         <div className="mt-3 flex items-center gap-2">
           <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
-            {(['feed', 'watchlist'] as const).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`cursor-pointer rounded-lg px-3 py-1.5 font-semibold capitalize ${tab === t ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200'}`}>{t === 'feed' ? '📡 Activity' : '⭐ Watchlist'}</button>
+            {(['feed', 'accounts', 'watchlist'] as const).map((t) => (
+              <button key={t} onClick={() => { setTab(t); setAccount(null) }} className={`cursor-pointer rounded-lg px-3 py-1.5 font-semibold capitalize ${tab === t ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200'}`}>{t === 'feed' ? '📡 Activity' : t === 'accounts' ? '👤 Accounts' : '⭐ Watchlist'}</button>
             ))}
           </div>
-          <select className="input !w-36 !py-1.5 text-xs" value={network} onChange={(e) => setNetwork(e.target.value)}>
-            {meta.networks.filter((n) => n.evm !== false).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
-          </select>
+          {tab === 'feed' && (
+            <select className="input !w-36 !py-1.5 text-xs" value={network} onChange={(e) => setNetwork(e.target.value)}>
+              {meta.networks.filter((n) => n.evm !== false).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+            </select>
+          )}
           {tab === 'feed' && <button className="btn-ghost !py-1.5 text-xs" onClick={loadFeed} disabled={loading}>{loading ? 'Loading…' : '↻'}</button>}
         </div>
 
@@ -104,7 +108,29 @@ export default function SmartMoney() {
         )}
 
         <div className="mt-3 min-h-0 flex-1 overflow-auto">
-          {tab === 'feed' ? (
+          {tab === 'accounts' ? (
+            account ? (
+              <WalletAccount address={account} onClose={() => setAccount(null)} />
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-500">Tap an account to see its trading history, charts, and to follow it — manually or automatically.</p>
+                {wallets.map((w) => {
+                  const f = follows.find((x) => x.walletAddress.toLowerCase() === w.address.toLowerCase() && x.enabled)
+                  return (
+                    <button key={w.address} onClick={() => setAccount(w.address)} className="flex w-full items-center gap-3 rounded-xl border border-white/[0.06] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500/40 to-cyan-500/30 text-sm">👤</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-slate-200">{w.label}</div>
+                        <div className="font-mono text-[10px] text-slate-600">{short(w.address)}</div>
+                      </div>
+                      {f && <span className="chip bg-emerald-500/10 text-emerald-300">🤖 following · {fmtUsd(f.totalBudgetUsd)}</span>}
+                      <span className="text-xs text-slate-500">view →</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          ) : tab === 'feed' ? (
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-[#0c101c] text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <tr>{['When', 'Wallet', 'Action', 'Token', 'Value', ''].map((h) => <th key={h} className="px-3 py-2 font-medium">{h}</th>)}</tr>

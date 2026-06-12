@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AutoSniperState, Bot, Meta, MonthlyPnl, Tournament, Trade } from './types'
+import type { AutoSniperState, Bot, Follow, Meta, MonthlyPnl, Tournament, Trade } from './types'
 
 interface AppState {
   meta: Meta | null
@@ -8,6 +8,7 @@ interface AppState {
   monthly: Record<string, MonthlyPnl>
   autoSniper: AutoSniperState | null
   tournaments: Tournament[]
+  follows: Follow[]
   prices: Record<string, number>
   wsOk: boolean
   mode: 'paper' | 'live'
@@ -62,6 +63,7 @@ export const useStore = create<AppState>((set, get) => ({
   monthly: {},
   autoSniper: null,
   tournaments: [],
+  follows: [],
   prices: {},
   wsOk: false,
   mode: 'paper',
@@ -80,15 +82,15 @@ export const useStore = create<AppState>((set, get) => ({
   async init() {
     const [meta, st] = await Promise.all([
       jget<Meta>('/api/meta'),
-      jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; tournaments: Tournament[]; mode: 'paper' | 'live' }>('/api/state'),
+      jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; tournaments: Tournament[]; follows: Follow[]; mode: 'paper' | 'live' }>('/api/state'),
     ])
-    set({ meta, bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, tournaments: st.tournaments ?? [], mode: st.mode })
+    set({ meta, bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, tournaments: st.tournaments ?? [], follows: st.follows ?? [], mode: st.mode })
     connectWs()
   },
 
   async refresh() {
-    const st = await jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; tournaments: Tournament[]; mode: 'paper' | 'live' }>('/api/state')
-    set({ bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, tournaments: st.tournaments ?? [], mode: st.mode })
+    const st = await jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; tournaments: Tournament[]; follows: Follow[]; mode: 'paper' | 'live' }>('/api/state')
+    set({ bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, tournaments: st.tournaments ?? [], follows: st.follows ?? [], mode: st.mode })
   },
 
   toggleTrades: () => set((s) => ({ showTrades: !s.showTrades })),
@@ -147,7 +149,7 @@ function connectWs() {
     try {
       const msg = JSON.parse(ev.data)
       if (msg.type === 'snapshot') {
-        useStore.setState({ bots: msg.bots, prices: msg.prices, monthly: msg.monthly ?? {}, autoSniper: msg.autoSniper ?? null, tournaments: msg.tournaments ?? [] })
+        useStore.setState({ bots: msg.bots, prices: msg.prices, monthly: msg.monthly ?? {}, autoSniper: msg.autoSniper ?? null, tournaments: msg.tournaments ?? [], follows: msg.follows ?? [] })
       } else if (msg.type === 'trade') {
         useStore.setState((s) =>
           s.trades.some((t) => t.id === msg.trade.id)

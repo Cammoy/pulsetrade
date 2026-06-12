@@ -61,6 +61,7 @@ export interface Bot {
   tournamentId?: string // competing in a tournament
   copy?: CopyConfig // present ⇒ copy-trades a tracked wallet
   ai?: boolean // present ⇒ AI-driven strategy
+  followId?: string // spawned by an auto-follow of a smart-money wallet
   sweepTo?: SweepTarget // where profits / stop-sweeps land (default 'native')
   riskReport?: unknown // safety screen captured at creation
   position: Position
@@ -145,6 +146,23 @@ export interface TrackedWallet {
   addedAt: number
 }
 
+/** Auto-follow: a budget that mirrors EVERY curated-token buy a wallet makes. */
+export interface Follow {
+  id: string
+  walletAddress: string
+  label: string
+  totalBudgetUsd: number
+  poolUsd: number // un-allocated budget remaining
+  perTradeUsd: number
+  maxConcurrent: number
+  risk: 'conservative' | 'balanced' | 'aggressive'
+  sweepTo?: SweepTarget
+  enabled: boolean
+  startedAt: number
+  lastScanAt: number
+  seenTx: string[] // wallet txs already mirrored (never double-follow)
+}
+
 export interface State {
   bots: Bot[]
   trades: Trade[]
@@ -152,12 +170,13 @@ export interface State {
   autoSniper: AutoSniper | null
   tournaments: Tournament[]
   wallets: TrackedWallet[]
+  follows: Follow[]
   settings: { mode: 'paper' | 'live' }
 }
 
 const empty: State = {
   bots: [], trades: [], monthly: {}, autoSniper: null,
-  tournaments: [], wallets: [], settings: { mode: 'paper' },
+  tournaments: [], wallets: [], follows: [], settings: { mode: 'paper' },
 }
 
 export function monthKey(ts: number): string {

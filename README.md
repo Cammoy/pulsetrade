@@ -20,10 +20,12 @@ a cent. All state persists in `server/data/state.json`.
 
 ## The networks
 
-Five cheap EVM networks for full live-capable trading, plus **Solana** and the
-**Internet Computer (ICP)** for paper trading (live swaps, sniping and wallet
-tracking are EVM-only for now — bots on Solana/ICP trade the curated coins,
-JUP/RAY/BONK/WIF/JTO and ICP/ckBTC, against real market prices).
+Five cheap EVM networks plus **Solana** and the **Internet Computer (ICP)**.
+EVM chains trade live via 0x; **Solana trades live via the Jupiter aggregator**
+(set `SOLANA_WALLET_KEY`). ICP trades live-price in paper for now — KongSwap and
+ICPSwap are canister-only DEXes with no REST API, so its on-chain executor is
+pending. Curated coins per chain include JUP/RAY/BONK/WIF/JTO on Solana and
+ICP/ckBTC on the Internet Computer. Sniping and wallet tracking are EVM-only.
 
 ### The 5 EVM networks
 
@@ -61,11 +63,14 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 - 💵 **Auto-sell to USDT** — every bot (wizard, sniper, auto-sniper, copy, AI, tournament) can
   sweep profits and stop-liquidations to USDT instead of the native coin; tournaments can
   auto-end after N hours and liquidate every contestant straight to USDT
-- 🐋 **Smart-money tracking & copy trading** — a permanent watchlist of publicly documented
-  smart-money wallets (Wintermute, DWF Labs, machibigbrother.eth, James Fickel, gcr.eth, …)
-  plus your own; see their buys/sells of curated tokens (Etherscan V2 feed) and launch
-  copy-trade bots that mirror a wallet's entries and exits (live feed needs
-  `ETHERSCAN_API_KEY`; watchlist + copy bots work regardless)
+- 🐋 **Smart-money tracking, account profiles & following** — a permanent watchlist of
+  publicly documented wallets (Wintermute, DWF Labs, machibigbrother.eth, James Fickel,
+  gcr.eth, …) plus your own. Three tabs: **Activity** (live buy/sell feed), **Accounts**
+  (per-wallet profile with a cumulative net-flow chart and per-token breakdown), and
+  **Watchlist**. Trade with any account **manually** (one-token copy bot) or
+  **automatically** (give it a budget; every curated-token buy spawns a mirror that exits
+  when the wallet sells, recycling returns into the next mirror). Live feed needs
+  `ETHERSCAN_API_KEY`; watchlist + follow setup work regardless. EVM-only.
 - 🏆 **Bot tournaments** — pit 2–12 bots (any strategy × risk) on the same coin with equal
   budgets; a live leaderboard ranks them by return %, with optional auto-end and a podium
 - 👛 **Multi-wallet connect** — MetaMask, Coinbase Wallet, any injected/EIP-6963 wallet, and

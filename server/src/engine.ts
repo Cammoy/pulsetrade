@@ -9,15 +9,16 @@
 // - a manual stop sweeps ALL proceeds to native
 // - every fill updates the persistent monthly ledger (state.monthly)
 
-import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State, type Tournament } from './store.js'
+import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State, type Tournament, type Follow } from './store.js'
 import { networkById, tokenOf, allPriceIds } from './networks.js'
 import { getSpotPrices, getCandles, spot, poolPrice, refreshPoolPrice } from './prices.js'
 import { strategyById, type Ctx } from './strategies.js'
 import { RISK } from './risk.js'
 import { liveReady, executeSwap } from './live.js'
+import { solanaLiveReady, executeSolanaSwap, lamportsForUsd, baseUnitsForQty, SOL_MINT } from './live-solana.js'
 import { screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
-import { walletTokenSignal, trackingReady as smartMoneyReady } from './smartmoney.js'
+import { walletTokenSignal, walletRecentBuys, trackingReady as smartMoneyReady } from './smartmoney.js'
 import { getAiSignal } from './ai-trader.js'
 import { parseUnits } from 'viem'
 
@@ -144,14 +145,15 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
   broadcast({ type: 'trade', trade })
 }
 
-/** Fire the live on-chain swap mirroring a paper decision (best-effort). */
+/**
+ * Fire the live on-chain swap mirroring a paper decision (best-effort).
+ * Per-chain executors: EVM via 0x, Solana via Jupiter; ICP is wired into this
+ * layer but stays paper until a verified KongSwap/ICPSwap canister integration
+ * lands (its DEXes have no REST API — see README).
+ */
 async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: number, price: number) {
-  if (state.settings.mode !== 'live' || !liveReady()) return
+  if (state.settings.mode !== 'live') return
   const net = networkById(bot.network)!
-  if (!net.evm) {
-    log(bot, 'LIVE EXECUTION SKIPPED: live trading is EVM-only — this network trades in paper', 'warn')
-    return
-  }
   // Sniper bots carry their token address/decimals on bot.pool; others resolve
   // from the curated list.
   const tokenAddress = bot.pool?.tokenAddress ?? tokenOf(bot.network, bot.token)?.address
@@ -163,19 +165,44 @@ async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: numb
   try {
     const nativePrice = spot(net.native.cg)
     if (side === 'buy' && !nativePrice) throw new Error('no native price for sizing')
-    const sellAmount =
-      side === 'buy'
-        ? parseUnits((usd / nativePrice!).toFixed(18), 18) // native in
-        : parseUnits(qty.toFixed(decimals), decimals)
-    const hash = await executeSwap({
-      chainId: net.chainId,
-      tokenAddress,
-      side,
-      sellAmountBaseUnits: sellAmount,
-      // Sells land in the bot's sweep target (USDT or native).
-      buyTokenAddress: side === 'sell' && bot.sweepTo === 'usdt' ? net.usdt.address : undefined,
-    })
-    log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
+
+    if (net.evm) {
+      if (!liveReady()) return // EVM live keys not configured — paper only
+      const sellAmount =
+        side === 'buy'
+          ? parseUnits((usd / nativePrice!).toFixed(18), 18) // native in
+          : parseUnits(qty.toFixed(decimals), decimals)
+      const hash = await executeSwap({
+        chainId: net.chainId,
+        tokenAddress,
+        side,
+        sellAmountBaseUnits: sellAmount,
+        // Sells land in the bot's sweep target (USDT or native).
+        buyTokenAddress: side === 'sell' && bot.sweepTo === 'usdt' ? net.usdt.address : undefined,
+      })
+      log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
+    } else if (net.id === 'solana') {
+      if (!solanaLiveReady()) {
+        log(bot, 'LIVE EXECUTION SKIPPED: set SOLANA_WALLET_KEY to trade Solana live — this trade stayed paper', 'warn')
+        return
+      }
+      const sig =
+        side === 'buy'
+          ? await executeSolanaSwap({
+              inputMint: SOL_MINT,
+              outputMint: tokenAddress,
+              amountBaseUnits: lamportsForUsd(usd, nativePrice!),
+            })
+          : await executeSolanaSwap({
+              inputMint: tokenAddress,
+              // Sells land in the bot's sweep target (USDT or SOL).
+              outputMint: bot.sweepTo === 'usdt' ? net.usdt.address : SOL_MINT,
+              amountBaseUnits: baseUnitsForQty(qty, decimals),
+            })
+      log(bot, `On-chain ${side} confirmed (Jupiter): ${sig.slice(0, 18)}…`, 'info')
+    } else {
+      log(bot, 'LIVE EXECUTION PENDING: ICP DEXes (KongSwap/ICPSwap) are canister-only — live executor not yet integrated; this trade stayed paper', 'warn')
+    }
   } catch (e: any) {
     log(bot, `LIVE EXECUTION FAILED (${side}): ${e.message ?? e}`, 'warn')
   }
@@ -243,6 +270,13 @@ async function tickBot(bot: Bot) {
     log(bot, 'Snipe complete — position closed, bot retired', 'info')
   }
 
+  // An auto-follow mirror that completed its round trip retires too — the
+  // follow pool reclaims its cash and stays free for the wallet's next buy.
+  if (bot.followId && bot.state.lastExitAt && bot.position.qty === 0 && bot.stats.wins + bot.stats.losses > 0) {
+    bot.status = 'stopped'
+    log(bot, 'Mirror round trip complete — bot retired, cash returns to the follow pool', 'info')
+  }
+
   // Equity sample roughly once a minute.
   const last = bot.equityHistory[bot.equityHistory.length - 1]
   if (!last || Date.now() - last.t > 60_000) {
@@ -293,6 +327,7 @@ async function tick() {
     )
     await Promise.all(state.bots.map((b) => tickBot(b).catch((e) => console.error(`[engine] bot ${b.name}:`, e))))
     await autoScan().catch((e) => console.error('[engine] auto-sniper scan failed', e))
+    await followScan().catch((e) => console.error('[engine] follow scan failed', e))
     resolveTournaments()
     save()
     const prices: Record<string, number> = {}
@@ -305,6 +340,7 @@ async function tick() {
       monthly: state.monthly,
       autoSniper: state.autoSniper ? { ...state.autoSniper, tried: undefined, stats: autoSniperStats() } : null,
       tournaments: state.tournaments.map(serializeTournament),
+      follows: state.follows.map(serializeFollow),
       smartMoney: { tracking: smartMoneyReady() },
     })
   } catch (e) {
@@ -334,6 +370,7 @@ export function createBot(input: {
   copy?: Bot['copy']
   ai?: boolean
   tournamentId?: string
+  followId?: string
   sweepTo?: Bot['sweepTo']
 }): Bot | { error: string } {
   const net = networkById(input.network)
@@ -367,6 +404,7 @@ export function createBot(input: {
     copy: input.copy,
     ai: input.ai || undefined,
     tournamentId: input.tournamentId,
+    followId: input.followId,
     sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
@@ -567,6 +605,132 @@ export function autoSniperStats() {
   }
 }
 
+// ── Auto-Follow: mirror EVERY curated-token buy a smart-money wallet makes ──
+// Give a wallet a budget; whenever it buys a curated token on any EVM network,
+// a copy bot is spawned with perTradeUsd from the pool. The bot mirrors the
+// position (sells when the wallet sells, plus the risk tier's stops) and
+// retires after the round trip, returning its cash to the pool.
+
+const FOLLOW_SCAN_MS = 90_000
+
+export async function followScan(now = Date.now()): Promise<void> {
+  for (const f of state.follows) {
+    // Always reclaim retired mirror bots — money comes home even when paused.
+    for (const b of state.bots) {
+      if (b.followId === f.id && b.status === 'stopped' && !b.state.reclaimedByFollow) {
+        b.state.reclaimedByFollow = true
+        f.poolUsd += b.cashUsd
+      }
+    }
+    if (!f.enabled || !smartMoneyReady()) continue
+    if (now - f.lastScanAt < FOLLOW_SCAN_MS) continue
+    f.lastScanAt = now
+
+    let active = state.bots.filter((b) => b.followId === f.id && b.status !== 'stopped').length
+    if (active >= f.maxConcurrent || f.poolUsd < f.perTradeUsd) continue
+
+    const buys = await walletRecentBuys(f.walletAddress, f.startedAt).catch(() => [])
+    for (const e of buys) {
+      if (active >= f.maxConcurrent || f.poolUsd < f.perTradeUsd) break
+      if (f.seenTx.includes(e.txHash)) continue
+      f.seenTx.push(e.txHash)
+      if (f.seenTx.length > 300) f.seenTx.splice(0, f.seenTx.length - 300)
+      // one live mirror per (wallet, network, token) at a time
+      const dup = state.bots.some((b) => b.followId === f.id && b.status !== 'stopped' && b.network === e.network && b.token === e.token)
+      if (dup) continue
+      const out = createCopyBot({
+        network: e.network,
+        token: e.token,
+        risk: f.risk,
+        budgetUsd: f.perTradeUsd,
+        walletAddress: f.walletAddress,
+        walletLabel: f.label,
+        sweepTo: f.sweepTo,
+        followId: f.id,
+      })
+      if (!('error' in out)) {
+        f.poolUsd -= f.perTradeUsd
+        active++
+      }
+    }
+  }
+  save()
+}
+
+export function startFollow(input: {
+  walletAddress: string
+  label?: string
+  totalBudgetUsd: number
+  perTradeUsd: number
+  maxConcurrent?: number
+  risk?: Follow['risk']
+  sweepTo?: Bot['sweepTo']
+}): Follow | { error: string } {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
+  const a = input.walletAddress.toLowerCase()
+  if (state.follows.some((f) => f.walletAddress.toLowerCase() === a && f.enabled))
+    return { error: 'already following this wallet — stop the existing follow first' }
+  const total = Number(input.totalBudgetUsd)
+  const per = Number(input.perTradeUsd)
+  if (!Number.isFinite(total) || total < 10) return { error: 'budget must be at least $10' }
+  if (!Number.isFinite(per) || per < 10 || per > total) return { error: 'per-trade must be ≥ $10 and ≤ the total budget' }
+  const risk = input.risk && RISK[input.risk] ? input.risk : 'balanced'
+  const f: Follow = {
+    id: uid(),
+    walletAddress: input.walletAddress,
+    label: input.label?.trim() || `${input.walletAddress.slice(0, 6)}…${input.walletAddress.slice(-4)}`,
+    totalBudgetUsd: total,
+    poolUsd: total,
+    perTradeUsd: per,
+    maxConcurrent: Math.max(1, Math.min(10, Math.floor(input.maxConcurrent ?? Math.floor(total / per)))),
+    risk,
+    sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
+    enabled: true,
+    startedAt: Date.now(),
+    lastScanAt: 0,
+    seenTx: [],
+  }
+  state.follows.push(f)
+  save()
+  return f
+}
+
+export function stopFollow(id: string, liquidate: boolean): Follow | { error: string } {
+  const f = state.follows.find((x) => x.id === id)
+  if (!f) return { error: 'not found' }
+  f.enabled = false
+  if (liquidate) {
+    for (const b of state.bots) {
+      if (b.followId === id && b.status !== 'stopped') controlBot(b.id, 'stop')
+    }
+  }
+  save()
+  return f
+}
+
+export function deleteFollow(id: string): boolean {
+  const f = state.follows.find((x) => x.id === id)
+  if (!f) return false
+  for (const b of state.bots.filter((x) => x.followId === id)) deleteBot(b.id)
+  state.follows = state.follows.filter((x) => x.id !== id)
+  save()
+  return true
+}
+
+export function followStats(f: Follow) {
+  const bots = state.bots.filter((b) => b.followId === f.id)
+  return {
+    active: bots.filter((b) => b.status !== 'stopped').length,
+    completed: bots.filter((b) => b.status === 'stopped').length,
+    realizedUsd: +bots.reduce((s, b) => s + b.stats.realizedUsd, 0).toFixed(2),
+    sweptUsd: +bots.reduce((s, b) => s + b.stats.nativeTakenUsd, 0).toFixed(2),
+    wins: bots.reduce((s, b) => s + b.stats.wins, 0),
+    losses: bots.reduce((s, b) => s + b.stats.losses, 0),
+  }
+}
+
+export const serializeFollow = (f: Follow) => ({ ...f, seenTx: undefined, stats: followStats(f) })
+
 // ── Copy-trade & AI bots ─────────────────────────────────────────────────────
 
 export function createCopyBot(input: {
@@ -577,6 +741,7 @@ export function createCopyBot(input: {
   walletAddress: string
   walletLabel: string
   sweepTo?: Bot['sweepTo']
+  followId?: string
 }): Bot | { error: string } {
   if (!/^0x[a-fA-F0-9]{40}$/.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
   if (!networkById(input.network)?.evm) return { error: 'copy trading needs an EVM network (wallet tracking is Etherscan-based)' }
@@ -585,6 +750,7 @@ export function createCopyBot(input: {
     name: `🐋 Copy ${input.walletLabel} · ${input.token}`,
     copy: { walletAddress: input.walletAddress, walletLabel: input.walletLabel },
     sweepTo: input.sweepTo,
+    followId: input.followId,
   })
   return out
 }

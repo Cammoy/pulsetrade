@@ -6,12 +6,13 @@ import { state, save } from './store.js'
 import { NETWORKS } from './networks.js'
 import { STRATEGIES } from './strategies.js'
 import { RISK } from './risk.js'
-import { startEngine, createBot, createSniper, createCopyBot, createAiBot, controlBot, deleteBot, serializeBot, trimTrades, startAutoSniper, stopAutoSniper, autoSniperStats, startTournament, endTournament, deleteTournament, serializeTournament } from './engine.js'
+import { startEngine, createBot, createSniper, createCopyBot, createAiBot, controlBot, deleteBot, serializeBot, trimTrades, startAutoSniper, stopAutoSniper, autoSniperStats, startTournament, endTournament, deleteTournament, serializeTournament, startFollow, stopFollow, deleteFollow, serializeFollow } from './engine.js'
 import { backtest, profitFinder } from './backtest.js'
 import { liveReady, botWalletAddress } from './live.js'
+import { solanaLiveReady, solanaWalletAddress } from './live-solana.js'
 import { screenToken, screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
-import { listWallets, addWallet, removeWallet, smartMoneyFeed, trackingReady, tokensForCopyTrade } from './smartmoney.js'
+import { listWallets, addWallet, removeWallet, smartMoneyFeed, walletProfile, trackingReady, tokensForCopyTrade } from './smartmoney.js'
 import { aiReady } from './ai-trader.js'
 
 const app = express()
@@ -23,7 +24,13 @@ app.get('/api/meta', (_req, res) => {
     networks: NETWORKS,
     strategies: STRATEGIES.map(({ id, name, tagline, description }) => ({ id, name, tagline, description })),
     risk: RISK,
-    live: { ready: liveReady(), botWallet: botWalletAddress() },
+    live: {
+      ready: liveReady() || solanaLiveReady(),
+      botWallet: botWalletAddress(),
+      evm: { ready: liveReady(), wallet: botWalletAddress() },
+      solana: { ready: solanaLiveReady(), wallet: solanaWalletAddress() },
+      icp: { ready: false, reason: 'KongSwap/ICPSwap are canister-only DEXes — live executor pending' },
+    },
     features: { ai: aiReady(), walletTracking: trackingReady() },
     copyTokens: tokensForCopyTrade(),
     mode: state.settings.mode,
@@ -38,6 +45,7 @@ app.get('/api/state', (_req, res) => {
     monthly: state.monthly,
     autoSniper: state.autoSniper ? { ...state.autoSniper, tried: undefined, stats: autoSniperStats() } : null,
     tournaments: state.tournaments.map(serializeTournament),
+    follows: state.follows.map(serializeFollow),
     smartMoney: { tracking: trackingReady() },
     mode: state.settings.mode,
   })
@@ -94,9 +102,28 @@ app.post('/api/wallets', (req, res) => {
 
 app.delete('/api/wallets/:address', (req, res) => res.json({ ok: removeWallet(req.params.address) }))
 
+app.get('/api/smart-money/wallet/:address', async (req, res) => {
+  res.json(await walletProfile(req.params.address))
+})
+
 app.get('/api/smart-money/:network', async (req, res) => {
   res.json(await smartMoneyFeed(req.params.network))
 })
+
+// ── Auto-follow a smart-money wallet ────────────────────────────────────────
+app.post('/api/follows', (req, res) => {
+  const out = startFollow(req.body ?? {})
+  if ('error' in out) return res.status(400).json(out)
+  res.json(serializeFollow(out))
+})
+
+app.post('/api/follows/:id/stop', (req, res) => {
+  const out = stopFollow(req.params.id, Boolean(req.body?.liquidate))
+  if ('error' in out) return res.status(404).json(out)
+  res.json(serializeFollow(out))
+})
+
+app.delete('/api/follows/:id', (req, res) => res.json({ ok: deleteFollow(req.params.id) }))
 
 app.post('/api/copy-bot', (req, res) => {
   const out = createCopyBot(req.body ?? {})
@@ -164,8 +191,8 @@ app.get('/api/candles/:cg', async (req, res) => {
 
 app.post('/api/mode', (req, res) => {
   const mode = req.body?.mode
-  if (mode === 'live' && !liveReady())
-    return res.status(400).json({ error: 'Live mode needs ZEROX_API_KEY and BOT_WALLET_KEY in server/.env' })
+  if (mode === 'live' && !liveReady() && !solanaLiveReady())
+    return res.status(400).json({ error: 'Live mode needs EVM keys (ZEROX_API_KEY + BOT_WALLET_KEY) and/or SOLANA_WALLET_KEY in server/.env' })
   if (mode !== 'paper' && mode !== 'live') return res.status(400).json({ error: 'bad mode' })
   state.settings.mode = mode
   save()

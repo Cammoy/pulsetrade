@@ -203,3 +203,109 @@ export async function walletTokenSignal(network: string, wallet: string, token: 
 
 export const tokensForCopyTrade = () =>
   NETWORKS.filter((n) => n.evm).map((n) => ({ network: n.id, name: n.name, tokens: n.tokens.map((t) => t.symbol) }))
+
+// ── Per-wallet account profile (detail tab) ──────────────────────────────────
+
+export interface WalletTokenStat {
+  network: string
+  token: string
+  buys: number
+  sells: number
+  volumeUsd: number
+  netFlowUsd: number // buys − sells (USD value, where priced)
+  lastTs: number
+}
+
+export interface WalletStats {
+  trades: number
+  buys: number
+  sells: number
+  volumeUsd: number
+  netFlowUsd: number
+  firstTs: number | null
+  lastTs: number | null
+  tokens: WalletTokenStat[] // sorted by volume desc
+  /** Cumulative net flow over time (oldest→newest) — the account chart. */
+  series: { t: number; v: number }[]
+}
+
+/** Pure aggregation of a wallet's events into account-level stats. */
+export function computeWalletStats(events: SmartMoneyEvent[]): WalletStats {
+  const asc = [...events].sort((a, b) => a.ts - b.ts)
+  const byTok = new Map<string, WalletTokenStat>()
+  let buys = 0
+  let sells = 0
+  let volume = 0
+  let net = 0
+  const series: { t: number; v: number }[] = []
+  for (const e of asc) {
+    const usd = e.usd ?? 0
+    if (e.side === 'buy') {
+      buys++
+      net += usd
+    } else {
+      sells++
+      net -= usd
+    }
+    volume += usd
+    series.push({ t: e.ts, v: +net.toFixed(2) })
+    const key = `${e.network}:${e.token}`
+    const t = byTok.get(key) ?? { network: e.network, token: e.token, buys: 0, sells: 0, volumeUsd: 0, netFlowUsd: 0, lastTs: 0 }
+    if (e.side === 'buy') {
+      t.buys++
+      t.netFlowUsd += usd
+    } else {
+      t.sells++
+      t.netFlowUsd -= usd
+    }
+    t.volumeUsd += usd
+    t.lastTs = Math.max(t.lastTs, e.ts)
+    byTok.set(key, t)
+  }
+  const tokens = [...byTok.values()]
+    .map((t) => ({ ...t, volumeUsd: +t.volumeUsd.toFixed(2), netFlowUsd: +t.netFlowUsd.toFixed(2) }))
+    .sort((a, b) => b.volumeUsd - a.volumeUsd)
+  return {
+    trades: asc.length,
+    buys,
+    sells,
+    volumeUsd: +volume.toFixed(2),
+    netFlowUsd: +net.toFixed(2),
+    firstTs: asc[0]?.ts ?? null,
+    lastTs: asc[asc.length - 1]?.ts ?? null,
+    tokens,
+    series,
+  }
+}
+
+/** A tracked wallet's curated-token activity across every EVM network. */
+export async function walletEvents(address: string): Promise<SmartMoneyEvent[]> {
+  ensureSeeded()
+  if (!trackingReady()) return []
+  const label = state.wallets.find((w) => w.address.toLowerCase() === address.toLowerCase())?.label ?? `${address.slice(0, 6)}…${address.slice(-4)}`
+  const all: SmartMoneyEvent[] = []
+  for (const net of NETWORKS.filter((n) => n.evm)) {
+    const rows = await fetchTransfers(net.chainId, address)
+    if (rows) all.push(...mapTransfers(net.id, address, label, rows, spot))
+  }
+  return all.sort((a, b) => b.ts - a.ts)
+}
+
+export async function walletProfile(address: string): Promise<{
+  wallet: string
+  label: string
+  tracking: boolean
+  events: SmartMoneyEvent[]
+  stats: WalletStats
+}> {
+  ensureSeeded()
+  const label = state.wallets.find((w) => w.address.toLowerCase() === address.toLowerCase())?.label ?? `${address.slice(0, 6)}…${address.slice(-4)}`
+  const events = await walletEvents(address)
+  return { wallet: address, label, tracking: trackingReady(), events: events.slice(0, 200), stats: computeWalletStats(events) }
+}
+
+/** Recent BUY events (for the auto-follow engine). */
+export async function walletRecentBuys(address: string, sinceTs: number): Promise<SmartMoneyEvent[]> {
+  const events = await walletEvents(address)
+  return events.filter((e) => e.side === 'buy' && e.ts > sinceTs)
+}

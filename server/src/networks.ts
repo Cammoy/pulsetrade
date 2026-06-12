@@ -142,7 +142,7 @@ export const NETWORKS: Network[] = [
     usdt: { symbol: 'ckUSDT', cg: 'tether', address: 'cngnf-vqaaa-aaaar-qag4q-cai', decimals: 6 },
     avgGasUsd: 0.001,
     color: '#29ABE2',
-    gt: '', // GeckoTerminal does not index ICP DEXes — sniping unavailable
+    gt: 'icp', // GeckoTerminal indexes ICPSwap pools (pricing/charts; sniping stays EVM-only)
     tokens: [
       { symbol: 'ICP', name: 'Internet Computer', cg: 'internet-computer', address: 'ryjl3-tyaaa-aaaaa-aaaba-cai', decimals: 8 },
       { symbol: 'ckBTC', name: 'Chain-key Bitcoin', cg: 'chain-key-bitcoin', address: 'mxzaz-hqaaa-aaaar-qaada-cai', decimals: 8 },
