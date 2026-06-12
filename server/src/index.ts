@@ -6,11 +6,13 @@ import { state, save } from './store.js'
 import { NETWORKS } from './networks.js'
 import { STRATEGIES } from './strategies.js'
 import { RISK } from './risk.js'
-import { startEngine, createBot, createSniper, controlBot, deleteBot, serializeBot, trimTrades, startAutoSniper, stopAutoSniper, autoSniperStats } from './engine.js'
+import { startEngine, createBot, createSniper, createCopyBot, createAiBot, controlBot, deleteBot, serializeBot, trimTrades, startAutoSniper, stopAutoSniper, autoSniperStats, startTournament, endTournament, deleteTournament, serializeTournament } from './engine.js'
 import { backtest, profitFinder } from './backtest.js'
 import { liveReady, botWalletAddress } from './live.js'
 import { screenToken, screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
+import { listWallets, addWallet, removeWallet, smartMoneyFeed, trackingReady, tokensForCopyTrade } from './smartmoney.js'
+import { aiReady } from './ai-trader.js'
 
 const app = express()
 app.use(cors())
@@ -22,6 +24,8 @@ app.get('/api/meta', (_req, res) => {
     strategies: STRATEGIES.map(({ id, name, tagline, description }) => ({ id, name, tagline, description })),
     risk: RISK,
     live: { ready: liveReady(), botWallet: botWalletAddress() },
+    features: { ai: aiReady(), walletTracking: trackingReady() },
+    copyTokens: tokensForCopyTrade(),
     mode: state.settings.mode,
   })
 })
@@ -33,6 +37,8 @@ app.get('/api/state', (_req, res) => {
     trades: state.trades.slice(-500).reverse(),
     monthly: state.monthly,
     autoSniper: state.autoSniper ? { ...state.autoSniper, tried: undefined, stats: autoSniperStats() } : null,
+    tournaments: state.tournaments.map(serializeTournament),
+    smartMoney: { tracking: trackingReady() },
     mode: state.settings.mode,
   })
 })
@@ -76,6 +82,49 @@ app.post('/api/auto-sniper/stop', (req, res) => {
   const out = stopAutoSniper(Boolean(req.body?.liquidate))
   res.json(out ? { ...out, tried: undefined, stats: autoSniperStats() } : null)
 })
+
+// ── Smart money / wallet tracking & copy trading ────────────────────────────
+app.get('/api/wallets', (_req, res) => res.json({ wallets: listWallets(), tracking: trackingReady() }))
+
+app.post('/api/wallets', (req, res) => {
+  const out = addWallet(req.body?.address ?? '', req.body?.label ?? '')
+  if ('error' in out) return res.status(400).json(out)
+  res.json(out)
+})
+
+app.delete('/api/wallets/:address', (req, res) => res.json({ ok: removeWallet(req.params.address) }))
+
+app.get('/api/smart-money/:network', async (req, res) => {
+  res.json(await smartMoneyFeed(req.params.network))
+})
+
+app.post('/api/copy-bot', (req, res) => {
+  const out = createCopyBot(req.body ?? {})
+  if ('error' in out) return res.status(400).json(out)
+  res.json(serializeBot(out))
+})
+
+// ── AI trading ───────────────────────────────────────────────────────────────
+app.post('/api/ai-bot', (req, res) => {
+  const out = createAiBot(req.body ?? {})
+  if ('error' in out) return res.status(400).json(out)
+  res.json(serializeBot(out))
+})
+
+// ── Tournaments ──────────────────────────────────────────────────────────────
+app.post('/api/tournaments', (req, res) => {
+  const out = startTournament(req.body ?? {})
+  if ('error' in out) return res.status(400).json(out)
+  res.json(out)
+})
+
+app.post('/api/tournaments/:id/end', (req, res) => {
+  const out = endTournament(req.params.id)
+  if ('error' in out) return res.status(404).json(out)
+  res.json(out)
+})
+
+app.delete('/api/tournaments/:id', (req, res) => res.json({ ok: deleteTournament(req.params.id) }))
 
 app.post('/api/profit-finder', async (req, res) => {
   const { budgetUsd, network, token } = req.body ?? {}

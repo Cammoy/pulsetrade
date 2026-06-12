@@ -38,8 +38,11 @@ export default function BotCard({ bot }: { bot: Bot }) {
             <div className="text-sm font-semibold text-white">{bot.name}</div>
             <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
               <span className="chip bg-white/[0.06] text-slate-300">{net?.name}</span>
-              <span className="chip bg-white/[0.06] text-slate-300">{bot.sniper ? '🎯 Sniper' : strat?.name}</span>
+              <span className="chip bg-white/[0.06] text-slate-300">
+                {bot.sniper ? '🎯 Sniper' : bot.copy ? '🐋 Copy' : bot.ai ? '🤖 AI' : strat?.name}
+              </span>
               {!bot.sniper && <span className={`chip capitalize ${RISK_CLS[bot.risk]}`}>{bot.risk}</span>}
+              {bot.tournamentId && <span className="chip bg-amber-500/10 text-amber-300">🏆</span>}
               {bot.sniper && bot.riskReport && <RiskBadge report={bot.riskReport as RiskReport} />}
             </div>
           </div>

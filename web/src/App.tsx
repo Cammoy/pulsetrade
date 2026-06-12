@@ -12,9 +12,12 @@ import Onboarding from './components/Onboarding'
 import Wizard from './components/Wizard'
 import BotDetail from './components/BotDetail'
 import ErrorBoundary from './components/ErrorBoundary'
+import SmartMoney from './components/SmartMoney'
+import AiBot from './components/AiBot'
+import { TournamentPanel, TournamentModal } from './components/Tournament'
 
 function Main() {
-  const { init, bots, wizardOpen, finderOpen, sniperOpen, docsOpen, tourOpen, openWizard, openTour, selectedBotId } = useStore()
+  const { init, bots, wizardOpen, finderOpen, sniperOpen, docsOpen, tourOpen, smartMoneyOpen, aiOpen, tournamentOpen, openWizard, openTour, selectedBotId } = useStore()
   const [ready, setReady] = useState(false)
   const [bootErr, setBootErr] = useState(false)
 
@@ -82,6 +85,8 @@ function Main() {
           </div>
         )}
 
+        <TournamentPanel />
+
         <MonthlyPnl />
 
         <TradeList />
@@ -96,6 +101,9 @@ function Main() {
       {wizardOpen && <Wizard />}
       {finderOpen && <ProfitFinder />}
       {sniperOpen && <Sniper />}
+      {smartMoneyOpen && <SmartMoney />}
+      {aiOpen && <AiBot />}
+      {tournamentOpen && <TournamentModal />}
       {docsOpen && <Docs />}
       {tourOpen && <Onboarding />}
       {selectedBotId && <BotDetail />}

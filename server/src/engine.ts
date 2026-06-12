@@ -9,7 +9,7 @@
 // - a manual stop sweeps ALL proceeds to native
 // - every fill updates the persistent monthly ledger (state.monthly)
 
-import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State } from './store.js'
+import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State, type Tournament } from './store.js'
 import { networkById, tokenOf, allPriceIds } from './networks.js'
 import { getSpotPrices, getCandles, spot, poolPrice, refreshPoolPrice } from './prices.js'
 import { strategyById, type Ctx } from './strategies.js'
@@ -17,6 +17,8 @@ import { RISK } from './risk.js'
 import { liveReady, executeSwap } from './live.js'
 import { screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
+import { walletTokenSignal, trackingReady as smartMoneyReady } from './smartmoney.js'
+import { getAiSignal } from './ai-trader.js'
 import { parseUnits } from 'viem'
 
 const TICK_MS = 20_000
@@ -195,6 +197,11 @@ async function tickBot(bot: Bot) {
     if (candles.length < 30) return
     closes = candles.map((c) => c.c)
     closes.push(price)
+    // AI bots act on a shared, periodically-refreshed Claude signal (non-blocking).
+    if (bot.ai) {
+      const sig = getAiSignal(bot.network, bot.token, closes)
+      if (sig) bot.state.aiSignal = sig
+    }
   }
 
   const ctx: Ctx = {
@@ -258,8 +265,21 @@ async function tick() {
       }
     }
     await Promise.all([...pools.values()].map((p) => refreshPoolPrice(p.gt, p.addr)))
+    // Refresh smart-money signals for copy-trade bots (cached 60s upstream).
+    await Promise.all(
+      state.bots
+        .filter((b) => b.copy && (b.status === 'running' || b.status === 'scheduled'))
+        .map((b) =>
+          walletTokenSignal(b.network, b.copy!.walletAddress, b.token)
+            .then((sig) => {
+              if (sig) b.state.copySignal = { side: sig.side, txHash: sig.txHash }
+            })
+            .catch(() => {}),
+        ),
+    )
     await Promise.all(state.bots.map((b) => tickBot(b).catch((e) => console.error(`[engine] bot ${b.name}:`, e))))
     await autoScan().catch((e) => console.error('[engine] auto-sniper scan failed', e))
+    resolveTournaments()
     save()
     const prices: Record<string, number> = {}
     for (const id of allPriceIds()) {
@@ -270,6 +290,8 @@ async function tick() {
       type: 'snapshot', ts: Date.now(), bots: state.bots.map(serializeBot), prices,
       monthly: state.monthly,
       autoSniper: state.autoSniper ? { ...state.autoSniper, tried: undefined, stats: autoSniperStats() } : null,
+      tournaments: state.tournaments.map(serializeTournament),
+      smartMoney: { tracking: smartMoneyReady() },
     })
   } catch (e) {
     console.error('[engine] tick failed', e)
@@ -295,6 +317,9 @@ export function createBot(input: {
   risk: Bot['risk']
   budgetUsd: number
   schedule?: Bot['schedule']
+  copy?: Bot['copy']
+  ai?: boolean
+  tournamentId?: string
 }): Bot | { error: string } {
   const net = networkById(input.network)
   const token = net && tokenOf(input.network, input.token)
@@ -322,6 +347,9 @@ export function createBot(input: {
     cashUsd: budget,
     status: 'running',
     schedule: sched ?? { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 },
+    copy: input.copy,
+    ai: input.ai || undefined,
+    tournamentId: input.tournamentId,
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
     stats: { realizedUsd: 0, feesUsd: 0, wins: 0, losses: 0, nativeTakenQty: 0, nativeTakenUsd: 0 },
@@ -514,6 +542,141 @@ export function autoSniperStats() {
     wins: bots.reduce((s, b) => s + b.stats.wins, 0),
     losses: bots.reduce((s, b) => s + b.stats.losses, 0),
   }
+}
+
+// ── Copy-trade & AI bots ─────────────────────────────────────────────────────
+
+export function createCopyBot(input: {
+  network: string
+  token: string
+  risk: Bot['risk']
+  budgetUsd: number
+  walletAddress: string
+  walletLabel: string
+}): Bot | { error: string } {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
+  const out = createBot({
+    network: input.network, token: input.token, strategy: 'copytrade', risk: input.risk, budgetUsd: input.budgetUsd,
+    name: `🐋 Copy ${input.walletLabel} · ${input.token}`,
+    copy: { walletAddress: input.walletAddress, walletLabel: input.walletLabel },
+  })
+  return out
+}
+
+export function createAiBot(input: {
+  network: string
+  token: string
+  risk: Bot['risk']
+  budgetUsd: number
+}): Bot | { error: string } {
+  const out = createBot({
+    network: input.network, token: input.token, strategy: 'ai', risk: input.risk, budgetUsd: input.budgetUsd,
+    name: `🤖 AI ${input.token} · ${RISK[input.risk]?.label ?? input.risk}`,
+    ai: true,
+  })
+  return out
+}
+
+// ── Tournaments ──────────────────────────────────────────────────────────────
+
+const RETURN_PCT = (b: Bot, price: number) => {
+  const unreal = b.position.qty > 0 && price > 0 ? b.position.qty * (price - b.position.avgCostUsd) : 0
+  return b.budgetUsd > 0 ? ((b.stats.realizedUsd + unreal) / b.budgetUsd) * 100 : 0
+}
+
+export function serializeTournament(t: Tournament) {
+  const bots = state.bots.filter((b) => b.tournamentId === t.id)
+  const standings = bots
+    .map((b) => {
+      const price = priceForBot(b) ?? 0
+      const unreal = b.position.qty > 0 && price > 0 ? b.position.qty * (price - b.position.avgCostUsd) : 0
+      return {
+        botId: b.id, name: b.name, strategy: b.strategy, risk: b.risk, status: b.status,
+        totalPnlUsd: +(b.stats.realizedUsd + unreal).toFixed(2),
+        returnPct: +RETURN_PCT(b, price).toFixed(2),
+        wins: b.stats.wins, losses: b.stats.losses,
+        trades: state.trades.filter((tr) => tr.botId === b.id).length,
+      }
+    })
+    .sort((a, b) => b.returnPct - a.returnPct)
+  return { ...t, standings }
+}
+
+/** Auto-end tournaments past their deadline and stamp the winner. */
+function resolveTournaments() {
+  const now = Date.now()
+  for (const t of state.tournaments) {
+    if (t.status !== 'running') continue
+    if (t.endsAt && now >= t.endsAt) {
+      const ranked = serializeTournament(t).standings
+      t.winnerBotId = ranked[0]?.botId ?? null
+      t.status = 'ended'
+      // Freeze every contestant: liquidate to native and stop.
+      for (const b of state.bots.filter((x) => x.tournamentId === t.id && x.status !== 'stopped')) {
+        controlBot(b.id, 'stop')
+      }
+    }
+  }
+}
+
+export function startTournament(input: {
+  name?: string
+  network: string
+  token: string
+  budgetUsd: number
+  contestants: { strategy: string; risk: Bot['risk'] }[]
+  durationHours?: number
+}): (Tournament & { standings: unknown }) | { error: string } {
+  const net = networkById(input.network)
+  if (!net || !tokenOf(input.network, input.token)) return { error: 'unknown network/token' }
+  const budget = Number(input.budgetUsd)
+  if (!Number.isFinite(budget) || budget < 10) return { error: 'budget per contestant must be at least $10' }
+  const contestants = (input.contestants ?? []).filter((c) => strategyById(c.strategy) && RISK[c.risk])
+  if (contestants.length < 2) return { error: 'a tournament needs at least 2 valid contestants' }
+  if (contestants.length > 12) return { error: 'at most 12 contestants' }
+
+  const t: Tournament = {
+    id: uid(),
+    name: input.name?.trim() || `${input.token} ${contestants.length}-bot tournament`,
+    network: net.id,
+    token: input.token,
+    budgetUsd: budget,
+    status: 'running',
+    createdAt: Date.now(),
+    endsAt: input.durationHours && input.durationHours > 0 ? Date.now() + input.durationHours * 3_600_000 : null,
+    winnerBotId: null,
+  }
+  state.tournaments.push(t)
+  for (const c of contestants) {
+    createBot({
+      network: input.network, token: input.token, strategy: c.strategy, risk: c.risk, budgetUsd: budget,
+      name: `🏆 ${input.token} ${strategyById(c.strategy)!.name} · ${RISK[c.risk].label}`,
+      tournamentId: t.id,
+    })
+  }
+  save()
+  return serializeTournament(t)
+}
+
+export function endTournament(id: string): (Tournament & { standings: unknown }) | { error: string } {
+  const t = state.tournaments.find((x) => x.id === id)
+  if (!t) return { error: 'not found' }
+  if (t.status === 'running') {
+    t.winnerBotId = serializeTournament(t).standings[0]?.botId ?? null
+    t.status = 'ended'
+    for (const b of state.bots.filter((x) => x.tournamentId === t.id && x.status !== 'stopped')) controlBot(b.id, 'stop')
+  }
+  save()
+  return serializeTournament(t)
+}
+
+export function deleteTournament(id: string): boolean {
+  const t = state.tournaments.find((x) => x.id === id)
+  if (!t) return false
+  for (const b of state.bots.filter((x) => x.tournamentId === id)) deleteBot(b.id)
+  state.tournaments = state.tournaments.filter((x) => x.id !== id)
+  save()
+  return true
 }
 
 export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot | { error: string } {

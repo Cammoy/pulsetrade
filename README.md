@@ -47,6 +47,16 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 
 ## Features
 
+- 🤖 **AI Trader** — Claude (`claude-opus-4-8`) analyses recent price action, RSI and moving
+  averages and decides BUY/SELL/HOLD; position size scales with the model's confidence. One
+  signal per coin, shared across bots, refreshed ~every 10 min (needs `ANTHROPIC_API_KEY`)
+- 🐋 **Smart-money tracking & copy trading** — watch wallets, see their buys/sells of curated
+  tokens (Etherscan V2 feed), and launch copy-trade bots that mirror a wallet's entries and
+  exits (live feed needs `ETHERSCAN_API_KEY`; watchlist + copy bots work regardless)
+- 🏆 **Bot tournaments** — pit 2–12 bots (any strategy × risk) on the same coin with equal
+  budgets; a live leaderboard ranks them by return %, with optional auto-end and a podium
+- 👛 **Multi-wallet connect** — MetaMask, Coinbase Wallet, any injected/EIP-6963 wallet, and
+  WalletConnect (when configured) via a wallet picker
 - 🧭 **Guided onboarding** — a first-run tour (replayable via the `?` button) plus full in-app
   documentation (`📖 Docs`) and a standalone [DOCS.md](DOCS.md)
 - 🎯 **Sniper (safe-only)** — shows only coins that are **verified, proven sellable, and held by
@@ -111,7 +121,9 @@ wallets exempted from dominance) and the **Auto-Sniper** (concurrent vetted snip
 repeats, budget debit + cash reclaim, rate-limited scan, stop/liquidate)**, input
 validation, and crash-safe persistence (atomic writes, corrupt-file fallback). No network
 access — all providers are mocked at the fetch layer; the same `decide()` code paths run in
-tests, backtests and live.
+tests, backtests and live. The newest additions add 20 more tests covering the copy-trade and
+AI strategies (signal-driven entries/exits), the smart-money transfer→buy/sell mapping, and
+the full tournament lifecycle (equal-budget spawn, return-% ranking, winner/stop, validation).
 
 ## Architecture
 
@@ -124,6 +136,8 @@ server/  Express + WebSocket engine (Node, tsx)
   src/risk-screen.ts pure 0–100 risk scorer (rug/honeypot/exploit flags)
   src/screen-fetch.ts  GoPlus + honeypot.is fetch wrapper, cached
   src/sniper.ts      GeckoTerminal new/trending pool discovery
+  src/smartmoney.ts  wallet watchlist + Etherscan V2 transfer feed + copy signals
+  src/ai-trader.ts   Claude-powered per-coin buy/sell/hold signals (Anthropic SDK)
   src/live.ts        0x v2 swap execution (dormant without keys)
 web/     Vite + React + Tailwind v4 + wagmi/viem + lightweight-charts
 ```

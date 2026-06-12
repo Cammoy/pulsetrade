@@ -35,6 +35,12 @@ export interface SniperConfig {
   trailingPct?: number // optional trailing stop from peak
 }
 
+/** Copy-trade configuration: mirror a tracked wallet's flow in one token. */
+export interface CopyConfig {
+  walletAddress: string
+  walletLabel: string
+}
+
 export interface Bot {
   id: string
   name: string
@@ -49,6 +55,9 @@ export interface Bot {
   pool?: PoolRef // present ⇒ priced from GeckoTerminal, not CoinGecko
   sniper?: SniperConfig // present ⇒ snipe bot
   auto?: boolean // spawned by the Auto-Sniper
+  tournamentId?: string // competing in a tournament
+  copy?: CopyConfig // present ⇒ copy-trades a tracked wallet
+  ai?: boolean // present ⇒ AI-driven strategy
   riskReport?: unknown // safety screen captured at creation
   position: Position
   state: Record<string, any> // per-strategy scratch state
@@ -110,15 +119,40 @@ export interface AutoSniper {
   lastScanAt: number
 }
 
+/** A profitability competition between bots with equal budgets. */
+export interface Tournament {
+  id: string
+  name: string
+  network: string
+  token: string
+  budgetUsd: number
+  status: 'running' | 'ended'
+  createdAt: number
+  endsAt: number | null // auto-end time, or null for open-ended
+  winnerBotId: string | null
+}
+
+/** A wallet on the smart-money watchlist. */
+export interface TrackedWallet {
+  address: string
+  label: string
+  addedAt: number
+}
+
 export interface State {
   bots: Bot[]
   trades: Trade[]
   monthly: Record<string, MonthlyPnl> // key: YYYY-MM (local time)
   autoSniper: AutoSniper | null
+  tournaments: Tournament[]
+  wallets: TrackedWallet[]
   settings: { mode: 'paper' | 'live' }
 }
 
-const empty: State = { bots: [], trades: [], monthly: {}, autoSniper: null, settings: { mode: 'paper' } }
+const empty: State = {
+  bots: [], trades: [], monthly: {}, autoSniper: null,
+  tournaments: [], wallets: [], settings: { mode: 'paper' },
+}
 
 export function monthKey(ts: number): string {
   const d = new Date(ts)

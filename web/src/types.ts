@@ -43,7 +43,54 @@ export interface Meta {
   strategies: StrategyMeta[]
   risk: Record<string, RiskParams>
   live: { ready: boolean; botWallet: string | null }
+  features: { ai: boolean; walletTracking: boolean }
+  copyTokens: { network: string; name: string; tokens: string[] }[]
   mode: 'paper' | 'live'
+}
+
+export interface TrackedWallet {
+  address: string
+  label: string
+  addedAt: number
+}
+
+export interface SmartMoneyEvent {
+  wallet: string
+  label: string
+  network: string
+  token: string
+  tokenAddress: string
+  side: 'buy' | 'sell'
+  qty: number
+  usd: number | null
+  ts: number
+  txHash: string
+}
+
+export interface TournamentStanding {
+  botId: string
+  name: string
+  strategy: string
+  risk: string
+  status: string
+  totalPnlUsd: number
+  returnPct: number
+  wins: number
+  losses: number
+  trades: number
+}
+
+export interface Tournament {
+  id: string
+  name: string
+  network: string
+  token: string
+  budgetUsd: number
+  status: 'running' | 'ended'
+  createdAt: number
+  endsAt: number | null
+  winnerBotId: string | null
+  standings: TournamentStanding[]
 }
 
 export interface Bot {
@@ -59,6 +106,9 @@ export interface Bot {
   schedule: { enabled: boolean; days: number[]; startHour: number; endHour: number }
   pool?: { poolAddress: string; tokenAddress: string; decimals: number }
   sniper?: { takeProfitPct: number; stopLossPct: number; maxHoldMin: number; trailingPct?: number }
+  copy?: { walletAddress: string; walletLabel: string }
+  ai?: boolean
+  tournamentId?: string
   riskReport?: RiskReport
   position: { qty: number; avgCostUsd: number; costUsd: number; openedAt: number | null }
   state: Record<string, unknown>

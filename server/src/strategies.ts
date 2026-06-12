@@ -216,6 +216,58 @@ const sniper: Strategy = {
   },
 }
 
+// Copy-trade: mirror a tracked "smart money" wallet's flow in this token. The
+// engine seeds ctx.state.copySignal = { side, txHash } from the wallet's latest
+// on-chain transfer; the bot buys when the wallet buys and sells when it sells,
+// acting once per new transaction.
+const copytrade: Strategy = {
+  id: 'copytrade',
+  name: 'Copy Trade',
+  tagline: 'Follow smart money',
+  description:
+    'Mirrors a tracked wallet: when that wallet buys this token, the bot buys; when it sells, the bot sells its position. Sized to the bot budget and risk tier.',
+  decide(ctx) {
+    const guard = slTp(ctx)
+    if (guard) return guard
+    const sig = ctx.state.copySignal as { side: 'buy' | 'sell'; txHash: string } | undefined
+    if (!sig || !sig.txHash) return null
+    if (ctx.state.lastCopiedTx === sig.txHash) return null
+    ctx.state.lastCopiedTx = sig.txHash
+    if (sig.side === 'buy') {
+      if (ctx.position.qty > 0) return null
+      const usd = Math.min((ctx.budgetUsd * ctx.params.positionPct) / 100, ctx.cashUsd)
+      if (usd > 1) return { type: 'buy', usd, reason: 'Smart money bought — copying entry' }
+    } else if (ctx.position.qty > 0) {
+      return { type: 'sell', fraction: 1, reason: 'Smart money sold — copying exit', exit: true }
+    }
+    return null
+  },
+}
+
+// AI: act on a Claude-generated signal (seeded into ctx.state.aiSignal by the
+// engine). Sizes by confidence × risk tier; exits on opposite signal or stop.
+const ai: Strategy = {
+  id: 'ai',
+  name: 'AI Trader',
+  tagline: 'Claude decides',
+  description:
+    'Claude analyses recent price action, RSI and moving averages and decides BUY / SELL / HOLD. Position size scales with the model\'s confidence and your risk tier. Requires an Anthropic API key.',
+  decide(ctx) {
+    const guard = slTp(ctx)
+    if (guard) return guard
+    const sig = ctx.state.aiSignal as { action: 'buy' | 'sell' | 'hold'; confidence: number; reason: string } | undefined
+    if (!sig) return null
+    if (sig.action === 'buy' && ctx.position.qty <= 0 && sig.confidence >= 0.55) {
+      if (coolingDown(ctx)) return null
+      const usd = Math.min((ctx.budgetUsd * ctx.params.positionPct * sig.confidence) / 100, ctx.cashUsd)
+      if (usd > 1) return { type: 'buy', usd, reason: `AI: BUY (${Math.round(sig.confidence * 100)}%) — ${sig.reason}` }
+    } else if (sig.action === 'sell' && ctx.position.qty > 0) {
+      return { type: 'sell', fraction: 1, reason: `AI: SELL — ${sig.reason}`, exit: true }
+    }
+    return null
+  },
+}
+
 export const STRATEGIES: Strategy[] = [grid, meanrev, momentum, dca]
-export const ALL_STRATEGIES: Strategy[] = [...STRATEGIES, sniper]
+export const ALL_STRATEGIES: Strategy[] = [...STRATEGIES, sniper, copytrade, ai]
 export const strategyById = (id: string) => ALL_STRATEGIES.find((s) => s.id === id)

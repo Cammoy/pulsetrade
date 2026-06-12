@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AutoSniperState, Bot, Meta, MonthlyPnl, Trade } from './types'
+import type { AutoSniperState, Bot, Meta, MonthlyPnl, Tournament, Trade } from './types'
 
 interface AppState {
   meta: Meta | null
@@ -7,6 +7,7 @@ interface AppState {
   trades: Trade[]
   monthly: Record<string, MonthlyPnl>
   autoSniper: AutoSniperState | null
+  tournaments: Tournament[]
   prices: Record<string, number>
   wsOk: boolean
   mode: 'paper' | 'live'
@@ -15,6 +16,9 @@ interface AppState {
   sniperOpen: boolean
   docsOpen: boolean
   tourOpen: boolean
+  smartMoneyOpen: boolean
+  aiOpen: boolean
+  tournamentOpen: boolean
   wizardOpen: boolean
   selectedBotId: string | null
   lastTradeId: string | null
@@ -26,6 +30,9 @@ interface AppState {
   openSniper(open: boolean): void
   openDocs(open: boolean): void
   openTour(open: boolean): void
+  openSmartMoney(open: boolean): void
+  openAi(open: boolean): void
+  openTournament(open: boolean): void
   selectBot(id: string | null): void
   createBot(payload: object): Promise<{ error?: string }>
   control(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void>
@@ -54,6 +61,7 @@ export const useStore = create<AppState>((set, get) => ({
   trades: [],
   monthly: {},
   autoSniper: null,
+  tournaments: [],
   prices: {},
   wsOk: false,
   mode: 'paper',
@@ -62,6 +70,9 @@ export const useStore = create<AppState>((set, get) => ({
   sniperOpen: false,
   docsOpen: false,
   tourOpen: false,
+  smartMoneyOpen: false,
+  aiOpen: false,
+  tournamentOpen: false,
   wizardOpen: false,
   selectedBotId: null,
   lastTradeId: null,
@@ -69,15 +80,15 @@ export const useStore = create<AppState>((set, get) => ({
   async init() {
     const [meta, st] = await Promise.all([
       jget<Meta>('/api/meta'),
-      jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; mode: 'paper' | 'live' }>('/api/state'),
+      jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; tournaments: Tournament[]; mode: 'paper' | 'live' }>('/api/state'),
     ])
-    set({ meta, bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, mode: st.mode })
+    set({ meta, bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, tournaments: st.tournaments ?? [], mode: st.mode })
     connectWs()
   },
 
   async refresh() {
-    const st = await jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; mode: 'paper' | 'live' }>('/api/state')
-    set({ bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, mode: st.mode })
+    const st = await jget<{ bots: Bot[]; trades: Trade[]; monthly: Record<string, MonthlyPnl>; autoSniper: AutoSniperState | null; tournaments: Tournament[]; mode: 'paper' | 'live' }>('/api/state')
+    set({ bots: st.bots, trades: st.trades, monthly: st.monthly, autoSniper: st.autoSniper, tournaments: st.tournaments ?? [], mode: st.mode })
   },
 
   toggleTrades: () => set((s) => ({ showTrades: !s.showTrades })),
@@ -86,6 +97,9 @@ export const useStore = create<AppState>((set, get) => ({
   openSniper: (sniperOpen) => set({ sniperOpen }),
   openDocs: (docsOpen) => set({ docsOpen }),
   openTour: (tourOpen) => set({ tourOpen }),
+  openSmartMoney: (smartMoneyOpen) => set({ smartMoneyOpen }),
+  openAi: (aiOpen) => set({ aiOpen }),
+  openTournament: (tournamentOpen) => set({ tournamentOpen }),
   selectBot: (selectedBotId) => set({ selectedBotId }),
 
   async createBot(payload) {
@@ -133,7 +147,7 @@ function connectWs() {
     try {
       const msg = JSON.parse(ev.data)
       if (msg.type === 'snapshot') {
-        useStore.setState({ bots: msg.bots, prices: msg.prices, monthly: msg.monthly ?? {}, autoSniper: msg.autoSniper ?? null })
+        useStore.setState({ bots: msg.bots, prices: msg.prices, monthly: msg.monthly ?? {}, autoSniper: msg.autoSniper ?? null, tournaments: msg.tournaments ?? [] })
       } else if (msg.type === 'trade') {
         useStore.setState((s) =>
           s.trades.some((t) => t.id === msg.trade.id)

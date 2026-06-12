@@ -2,7 +2,7 @@ import { useStore } from '../store'
 import WalletButton from './WalletButton'
 
 export default function Header() {
-  const { wsOk, mode, setMode, meta, openWizard, openFinder, openSniper, openDocs, openTour } = useStore()
+  const { wsOk, mode, setMode, meta, openWizard, openFinder, openSniper, openDocs, openTour, openSmartMoney, openAi, openTournament } = useStore()
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#070a12]/80 backdrop-blur-xl">
@@ -42,12 +42,13 @@ export default function Header() {
           ))}
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1.5">
           <WalletButton />
-          <button className="btn-ghost hidden sm:inline-flex" onClick={() => openSniper(true)} title="Snipe freshly launched tokens — auto-screened for honeypots and rugs">
-            🎯 Sniper
-          </button>
-          <button className="btn-ghost hidden sm:inline-flex" onClick={() => openFinder(true)} title="Backtest every strategy × risk × coin for a stake and rank by profit">
+          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openAi(true)} title="AI Trader — Claude decides buy/sell/hold">🤖</button>
+          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openSmartMoney(true)} title="Smart Money — track wallets & copy trade">🐋</button>
+          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openTournament(true)} title="Bot tournament — compete for the best return">🏆</button>
+          <button className="btn-ghost !px-2.5 hidden sm:inline-flex" onClick={() => openSniper(true)} title="Snipe freshly launched tokens — auto-screened for honeypots and rugs">🎯</button>
+          <button className="btn-ghost hidden lg:inline-flex" onClick={() => openFinder(true)} title="Backtest every strategy × risk × coin for a stake and rank by profit">
             💡 Profit Finder
           </button>
           <button className="btn-ghost !px-2.5" onClick={() => openDocs(true)} title="Documentation">📖</button>
