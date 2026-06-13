@@ -138,7 +138,8 @@ body {
   padding-bottom: calc(76px + env(safe-area-inset-bottom));
 }
 
-@media (min-width: 768px) {
+/* Bottom nav is present below lg (1024px); reclaim the space on desktop. */
+@media (min-width: 1024px) {
   .has-bottom-nav { padding-bottom: 1.5rem; }
 }
 

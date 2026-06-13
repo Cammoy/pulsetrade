@@ -60,8 +60,8 @@ function Main() {
           <>
             <StatsBar />
 
-            {/* Market pulse is always one tap/scroll away — show a compact strip on home too */}
-            <div className="md:hidden">
+            {/* Market pulse is always one tap/scroll away — compact strip on the tablet/phone home */}
+            <div className="lg:hidden">
               <MarketPulseStrip />
             </div>
 

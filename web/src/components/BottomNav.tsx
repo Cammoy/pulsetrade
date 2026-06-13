@@ -21,7 +21,7 @@ export default function BottomNav() {
 
   return (
     <>
-      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[#0a0e17]/95 backdrop-blur-xl md:hidden">
+      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[#0a0e17]/95 backdrop-blur-xl lg:hidden">
         <div className="mx-auto flex max-w-md items-end px-2">
           <Item active={view === 'home'} icon="🤖" label="Bots" onClick={() => setView('home')} />
           <Item active={view === 'market'} icon="📊" label="Market" onClick={() => setView('market')} />
@@ -57,7 +57,7 @@ function MoreSheet() {
     { icon: '✨', label: 'Welcome tour', sub: 'Replay the onboarding', onClick: go(openTour) },
   ]
   return (
-    <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm md:hidden" onClick={() => openMore(false)}>
+    <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm lg:hidden" onClick={() => openMore(false)}>
       <div className="animate-sheet pb-safe w-full max-w-md rounded-t-3xl border-t border-white/10 bg-[#0d1320] p-4" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/20" />
         <div className="space-y-1">

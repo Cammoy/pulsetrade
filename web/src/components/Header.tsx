@@ -7,12 +7,13 @@ export default function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#070a12]/80 backdrop-blur-xl">
       <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4">
-        <div className="flex shrink-0 items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-lg shadow-lg shadow-indigo-500/30">
+        {/* Brand — logo never shrinks; the wordmark truncates before anything clips */}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-lg shadow-lg shadow-indigo-500/30">
             ⚡
           </div>
-          <div>
-            <div className="text-base font-bold tracking-tight text-white">PulseTrade</div>
+          <div className="min-w-0">
+            <div className="truncate text-base font-bold tracking-tight text-white">PulseTrade</div>
             <div className="-mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
               <span className={`h-1.5 w-1.5 rounded-full ${wsOk ? 'bg-emerald-400' : 'bg-rose-400'}`} />
               <span className="hidden sm:inline">{wsOk ? 'engine live' : 'reconnecting…'}</span>
@@ -21,7 +22,7 @@ export default function Header() {
         </div>
 
         {/* View switch (desktop) — Bots dashboard vs Market overview */}
-        <div className="ml-3 hidden items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs md:flex">
+        <div className="ml-3 hidden items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs lg:flex">
           {(['home', 'market'] as const).map((v) => (
             <button
               key={v}
@@ -35,49 +36,50 @@ export default function Header() {
           ))}
         </div>
 
-        <div className="ml-2 flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
-          {(['paper', 'live'] as const).map((m) => (
-            <button
-              key={m}
-              onClick={async () => {
-                const out = await setMode(m)
-                if (out.error) alert(out.error)
-              }}
-              className={`cursor-pointer rounded-[10px] px-3 py-1.5 font-semibold transition-all ${
-                mode === m
-                  ? m === 'live'
-                    ? 'bg-rose-500/90 text-white shadow'
-                    : 'bg-indigo-500/90 text-white shadow'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-              title={m === 'live' && !meta?.live.ready ? 'Add ZEROX_API_KEY + BOT_WALLET_KEY to server/.env to enable' : ''}
-            >
-              {m === 'paper' ? '📝 Paper' : '🔴 Live'}
-            </button>
-          ))}
-        </div>
-
-        <div className="ml-auto flex items-center gap-1.5">
+        {/* Right cluster — mode toggle + wallet always; tools on md+. shrink-0 so it never gets squeezed. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <div className="flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+            {(['paper', 'live'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={async () => {
+                  const out = await setMode(m)
+                  if (out.error) alert(out.error)
+                }}
+                className={`cursor-pointer whitespace-nowrap rounded-[10px] px-2.5 py-1.5 font-semibold transition-all sm:px-3 ${
+                  mode === m
+                    ? m === 'live'
+                      ? 'bg-rose-500/90 text-white shadow'
+                      : 'bg-indigo-500/90 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title={m === 'live' && !meta?.live.ready ? 'Add ZEROX_API_KEY + BOT_WALLET_KEY to server/.env to enable' : ''}
+              >
+                {m === 'paper' ? '📝' : '🔴'}
+                <span className="hidden sm:inline">&nbsp;{m === 'paper' ? 'Paper' : 'Live'}</span>
+              </button>
+            ))}
+          </div>
           <WalletButton />
-          {/* Tools live in the mobile bottom-nav "More" sheet; show inline on md+ only */}
-          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openAi(true)} title="AI Trader — Gemini decides buy/sell/hold">
+          {/* Below lg the bottom-nav + "More" sheet carry these; full toolbar shows on lg+ only */}
+          <button className="btn-ghost !px-2.5 hidden lg:inline-flex" onClick={() => openAi(true)} title="AI Trader — Gemini decides buy/sell/hold">
             🤖<span className="hidden 2xl:inline">&nbsp;AI</span>
           </button>
-          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openSmartMoney(true)} title="Smart Money — track wallets, copy & follow them">
+          <button className="btn-ghost !px-2.5 hidden lg:inline-flex" onClick={() => openSmartMoney(true)} title="Smart Money — track wallets, copy & follow them">
             🐋<span className="hidden 2xl:inline">&nbsp;Smart Money</span>
           </button>
-          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openTournament(true)} title="Bot tournament — compete for the best return">
+          <button className="btn-ghost !px-2.5 hidden lg:inline-flex" onClick={() => openTournament(true)} title="Bot tournament — compete for the best return">
             🏆<span className="hidden 2xl:inline">&nbsp;Tournament</span>
           </button>
-          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openSniper(true)} title="Snipe freshly launched tokens — auto-screened for honeypots and rugs">
+          <button className="btn-ghost !px-2.5 hidden lg:inline-flex" onClick={() => openSniper(true)} title="Snipe freshly launched tokens — auto-screened for honeypots and rugs">
             🎯<span className="hidden 2xl:inline">&nbsp;Sniper</span>
           </button>
-          <button className="btn-ghost hidden lg:inline-flex" onClick={() => openFinder(true)} title="Backtest every strategy × risk × coin for a stake and rank by profit">
+          <button className="btn-ghost hidden xl:inline-flex" onClick={() => openFinder(true)} title="Backtest every strategy × risk × coin for a stake and rank by profit">
             💡 Profit Finder
           </button>
-          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openDocs(true)} title="Documentation">📖</button>
-          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openTour(true)} title="Replay the welcome tour">?</button>
-          <button className="btn-primary hidden md:inline-flex" onClick={() => openWizard(true)}>
+          <button className="btn-ghost !px-2.5 hidden lg:inline-flex" onClick={() => openDocs(true)} title="Documentation">📖</button>
+          <button className="btn-ghost !px-2.5 hidden lg:inline-flex" onClick={() => openTour(true)} title="Replay the welcome tour">?</button>
+          <button className="btn-primary hidden lg:inline-flex" onClick={() => openWizard(true)}>
             + New Bot
           </button>
         </div>
