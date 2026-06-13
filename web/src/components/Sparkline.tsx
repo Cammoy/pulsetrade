@@ -36,7 +36,7 @@ export default function Sparkline({
         <line x1={0} x2={width} y1={y(baseline)} y2={y(baseline)} stroke="#475569" strokeDasharray="3 3" strokeWidth="1" />
       )}
       <path d={`${d} L${width},${height} L0,${height} Z`} fill={`url(#${id})`} />
-      <path d={d} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+      <path d={d} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" className="spark-line" />
     </svg>
   )
 }

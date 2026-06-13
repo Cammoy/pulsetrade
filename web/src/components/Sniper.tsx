@@ -90,8 +90,8 @@ export default function Sniper() {
   const canArm = report?.tradeable && Number(budget) >= 10 && Number(tp) > 0 && Number(sl) > 0 && Number(hold) > 0
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" onClick={() => openSniper(false)}>
-      <div className="glass flex max-h-[92vh] w-full max-w-4xl flex-col border-white/10 bg-[#0b0f1a]/95 p-5" onClick={(e) => e.stopPropagation()}>
+    <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openSniper(false)}>
+      <div className="glass animate-sheet pb-safe flex max-h-[94vh] w-full max-w-4xl flex-col !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-white">🎯 Sniper</h2>

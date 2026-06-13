@@ -6,6 +6,7 @@
 
 body {
   @apply text-slate-200 antialiased;
+  overflow-x: hidden;
   background: #070a12;
   background-image:
     radial-gradient(1200px 600px at 15% -10%, rgba(79, 70, 229, 0.16), transparent 60%),
@@ -61,6 +62,84 @@ body {
 
 .flash {
   animation: flash-row 1.4s ease-out 1;
+}
+
+/* ── Micro-animations ──────────────────────────────────────────────────── */
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-in {
+  animation: fade-in-up 0.3s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+}
+
+@keyframes sheet-up {
+  from { opacity: 0; transform: translateY(24px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-sheet {
+  animation: sheet-up 0.28s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-backdrop {
+  animation: backdrop-in 0.2s ease-out both;
+}
+
+@keyframes spark-draw {
+  from { stroke-dashoffset: 600; }
+  to { stroke-dashoffset: 0; }
+}
+
+.spark-line {
+  stroke-dasharray: 600;
+  animation: spark-draw 1.1s ease-out both;
+}
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.06) 25%, rgba(148, 163, 184, 0.14) 50%, rgba(148, 163, 184, 0.06) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+.card-lift {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.card-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in, .animate-sheet, .animate-backdrop, .spark-line, .pulse-dot { animation: none !important; }
+  .card-lift, .card-lift:hover { transition: none; transform: none; }
+}
+
+/* ── Mobile / safe areas ───────────────────────────────────────────────── */
+
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}
+
+.has-bottom-nav {
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+  .has-bottom-nav { padding-bottom: 1.5rem; }
 }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }

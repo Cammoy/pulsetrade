@@ -56,6 +56,13 @@ tolerances and compare their P&L side by side — the dashboard shows a per-tole
 
 ## Features
 
+- 📊 **Market dashboard** — a live overview of crypto overall: a Risk-on/Neutral/Risk-off
+  market-pulse with a 0–100 composite (breadth + Fear & Greed), global stats (market cap,
+  volume, BTC/ETH dominance), the Fear & Greed meter, and the top-20 coins with 7-day
+  sparklines and transparent BUY/SELL/HOLD technical signals (RSI + EMA trend + momentum)
+- 📱 **Native-feeling on every device** — responsive down to small phones, a mobile bottom
+  nav with a center New-Bot action and a "More" sheet, bottom-sheet modals with safe-area
+  insets, and tasteful micro-animations (respecting `prefers-reduced-motion`)
 - 🤖 **AI Trader** — Google Gemini (`gemini-2.5-flash`) analyses recent price action, RSI and
   moving averages and decides BUY/SELL/HOLD; position size scales with the model's confidence.
   One signal per coin, shared across bots, refreshed ~every 10 min (needs `GEMINI_API_KEY`;
@@ -129,7 +136,7 @@ accounting continues in parallel as the source of truth for P&L.
 npm test
 ```
 
-133 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
+140 tests cover the indicators (known-value checks), every strategy's entry/exit/cooldown
 logic against deterministic price series, the paper executor's accounting (cost basis
 includes buy fees; an equity-identity test proves cash + position + native sweeps always
 equals budget + P&L), profit sweeps, stop-&-sweep, schedule windows (including overnight),

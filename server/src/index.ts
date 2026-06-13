@@ -184,6 +184,11 @@ app.post('/api/backtest', async (req, res) => {
   res.json(out)
 })
 
+app.get('/api/market', async (_req, res) => {
+  const { marketOverview } = await import('./market.js')
+  res.json(await marketOverview())
+})
+
 app.get('/api/candles/:cg', async (req, res) => {
   const { getCandles } = await import('./prices.js')
   res.json(await getCandles(req.params.cg, Number(req.query.days) || 7))

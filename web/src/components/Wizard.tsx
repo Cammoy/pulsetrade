@@ -118,8 +118,8 @@ export default function Wizard() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" onClick={() => openWizard(false)}>
-      <div className="glass w-full max-w-2xl border-white/10 bg-[#0b0f1a]/95 p-5" onClick={(e) => e.stopPropagation()}>
+    <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openWizard(false)}>
+      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-2xl overflow-auto !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
         {/* progress */}
         <div className="mb-5 flex items-center gap-1">
           {STEPS.map((s, i) => (

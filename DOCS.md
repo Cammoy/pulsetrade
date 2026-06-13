@@ -58,6 +58,22 @@ stop-loss, take-profit, grid spacing, RSI thresholds and cooldowns.
 
 ---
 
+## 3a. Market dashboard
+
+The **📊 Market** view (top toggle on desktop, bottom-nav tab on mobile) is an
+at-a-glance read on crypto overall:
+
+- **Market pulse** — one regime label (**Risk-on** / **Neutral** / **Risk-off**)
+  with a 0–100 composite blending market breadth (how many top coins are up) with
+  the Fear & Greed index, plus a note on which strategy types suit the conditions.
+- **Global stats & sentiment** — total market cap (+24h change), 24h volume,
+  BTC/ETH dominance, the live Fear & Greed meter, and buy/sell signal breadth.
+- **Top coins & signals** — the top 20 by market cap with 7-day sparklines and a
+  **BUY / SELL / HOLD** chip each, derived from RSI + 9/21 EMA trend + momentum
+  (hover for the reasons). Evidence to inform your judgement — **not advice**.
+
+---
+
 ## 4. Profit Finder
 
 "Here is $100 — show me the max profit." Enter a stake and network; it backtests

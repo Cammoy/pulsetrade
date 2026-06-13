@@ -3,10 +3,10 @@ import { fmtSign, fmtUsd, pnlColor } from '../format'
 
 function Stat({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <div className="glass flex-1 px-4 py-3">
-      <div className="text-[11px] font-medium tracking-wide text-slate-500 uppercase">{label}</div>
-      <div className={`mt-0.5 text-xl font-bold tabular-nums ${color ?? 'text-white'}`}>{value}</div>
-      {sub && <div className="text-[11px] text-slate-500">{sub}</div>}
+    <div className="glass min-w-0 px-4 py-3">
+      <div className="truncate text-[11px] font-medium tracking-wide text-slate-500 uppercase">{label}</div>
+      <div className={`mt-0.5 truncate text-xl font-bold tabular-nums ${color ?? 'text-white'}`}>{value}</div>
+      {sub && <div className="truncate text-[11px] text-slate-500">{sub}</div>}
     </div>
   )
 }
@@ -29,9 +29,9 @@ export default function StatsBar() {
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         <Stat label="Total P&L" value={fmtSign(totalPnl)} color={pnlColor(totalPnl)} sub={`realized ${fmtSign(realized)}`} />
-        <Stat label="Profit taken" value={fmtUsd(native)} sub="swept to ETH / BNB / POL / USDT" color="text-cyan-300" />
+        <Stat label="Profit taken" value={fmtUsd(native)} sub="swept to native / USDT" color="text-cyan-300" />
         <Stat label="Active bots" value={`${active.length}/${bots.length}`} sub="running or scheduled" />
         <Stat
           label="Win rate"

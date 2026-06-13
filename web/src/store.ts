@@ -21,6 +21,8 @@ interface AppState {
   aiOpen: boolean
   tournamentOpen: boolean
   wizardOpen: boolean
+  moreOpen: boolean
+  view: 'home' | 'market'
   selectedBotId: string | null
   lastTradeId: string | null
   init(): Promise<void>
@@ -34,6 +36,8 @@ interface AppState {
   openSmartMoney(open: boolean): void
   openAi(open: boolean): void
   openTournament(open: boolean): void
+  openMore(open: boolean): void
+  setView(view: 'home' | 'market'): void
   selectBot(id: string | null): void
   createBot(payload: object): Promise<{ error?: string; id?: string }>
   control(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void>
@@ -76,6 +80,8 @@ export const useStore = create<AppState>((set, get) => ({
   aiOpen: false,
   tournamentOpen: false,
   wizardOpen: false,
+  moreOpen: false,
+  view: 'home',
   selectedBotId: null,
   lastTradeId: null,
 
@@ -102,6 +108,8 @@ export const useStore = create<AppState>((set, get) => ({
   openSmartMoney: (smartMoneyOpen) => set({ smartMoneyOpen }),
   openAi: (aiOpen) => set({ aiOpen }),
   openTournament: (tournamentOpen) => set({ tournamentOpen }),
+  openMore: (moreOpen) => set({ moreOpen }),
+  setView: (view) => set({ view }),
   selectBot: (selectedBotId) => set({ selectedBotId }),
 
   async createBot(payload) {

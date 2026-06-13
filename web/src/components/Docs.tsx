@@ -57,6 +57,21 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'market',
+    title: 'Market dashboard',
+    body: (
+      <>
+        <P>The <B>📊 Market</B> view (top toggle on desktop, bottom-nav tab on mobile) is your at-a-glance read on crypto overall.</P>
+        <H>Market pulse</H>
+        <P>A single regime label — <span className="font-semibold text-emerald-300">Risk-on</span>, <span className="font-semibold text-amber-300">Neutral</span> or <span className="font-semibold text-rose-300">Risk-off</span> — with a 0–100 composite blending market breadth (how many top coins are up) with the Fear &amp; Greed index, plus a one-line read on which strategy types tend to suit the conditions.</P>
+        <H>Global stats &amp; sentiment</H>
+        <P>Total market cap (with 24h change), 24h volume, BTC/ETH dominance, the live <B>Fear &amp; Greed</B> meter, and how many of the top coins are flashing buy vs sell.</P>
+        <H>Top coins &amp; signals</H>
+        <P>The top 20 by market cap with 7-day sparklines and a <B>BUY / SELL / HOLD</B> chip each — a transparent technical read from RSI, the 9/21 EMA trend and recent momentum (hover for the exact reasons). These are evidence to inform your judgement, <B>not financial advice</B>.</P>
+      </>
+    ),
+  },
+  {
     id: 'finder',
     title: 'Profit Finder',
     body: (
@@ -155,7 +170,7 @@ export default function Docs() {
   const section = SECTIONS.find((s) => s.id === active)!
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" onClick={() => openDocs(false)}>
+    <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openDocs(false)}>
       <div className="glass flex h-[88vh] w-full max-w-4xl flex-col border-white/10 bg-[#0b0f1a]/95 sm:flex-row" onClick={(e) => e.stopPropagation()}>
         <aside className="flex shrink-0 flex-col gap-0.5 border-b border-white/[0.06] p-3 sm:w-52 sm:border-b-0 sm:border-r">
           <div className="mb-1 flex items-center justify-between">

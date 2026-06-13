@@ -2,12 +2,12 @@ import { useStore } from '../store'
 import WalletButton from './WalletButton'
 
 export default function Header() {
-  const { wsOk, mode, setMode, meta, openWizard, openFinder, openSniper, openDocs, openTour, openSmartMoney, openAi, openTournament } = useStore()
+  const { wsOk, mode, setMode, meta, view, setView, openWizard, openFinder, openSniper, openDocs, openTour, openSmartMoney, openAi, openTournament } = useStore()
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-[#070a12]/80 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
-        <div className="flex items-center gap-2.5">
+      <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 py-3 sm:gap-3 sm:px-4">
+        <div className="flex shrink-0 items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-lg shadow-lg shadow-indigo-500/30">
             ⚡
           </div>
@@ -15,12 +15,27 @@ export default function Header() {
             <div className="text-base font-bold tracking-tight text-white">PulseTrade</div>
             <div className="-mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
               <span className={`h-1.5 w-1.5 rounded-full ${wsOk ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-              {wsOk ? 'engine live' : 'reconnecting…'}
+              <span className="hidden sm:inline">{wsOk ? 'engine live' : 'reconnecting…'}</span>
             </div>
           </div>
         </div>
 
-        <div className="ml-3 flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+        {/* View switch (desktop) — Bots dashboard vs Market overview */}
+        <div className="ml-3 hidden items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs md:flex">
+          {(['home', 'market'] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`cursor-pointer rounded-[10px] px-3 py-1.5 font-semibold transition-all ${
+                view === v ? 'bg-white/10 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {v === 'home' ? '🤖 Bots' : '📊 Market'}
+            </button>
+          ))}
+        </div>
+
+        <div className="ml-2 flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
           {(['paper', 'live'] as const).map((m) => (
             <button
               key={m}
@@ -44,6 +59,7 @@ export default function Header() {
 
         <div className="ml-auto flex items-center gap-1.5">
           <WalletButton />
+          {/* Tools live in the mobile bottom-nav "More" sheet; show inline on md+ only */}
           <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openAi(true)} title="AI Trader — Gemini decides buy/sell/hold">
             🤖<span className="hidden 2xl:inline">&nbsp;AI</span>
           </button>
@@ -53,15 +69,15 @@ export default function Header() {
           <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openTournament(true)} title="Bot tournament — compete for the best return">
             🏆<span className="hidden 2xl:inline">&nbsp;Tournament</span>
           </button>
-          <button className="btn-ghost !px-2.5 hidden sm:inline-flex" onClick={() => openSniper(true)} title="Snipe freshly launched tokens — auto-screened for honeypots and rugs">
+          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openSniper(true)} title="Snipe freshly launched tokens — auto-screened for honeypots and rugs">
             🎯<span className="hidden 2xl:inline">&nbsp;Sniper</span>
           </button>
           <button className="btn-ghost hidden lg:inline-flex" onClick={() => openFinder(true)} title="Backtest every strategy × risk × coin for a stake and rank by profit">
             💡 Profit Finder
           </button>
-          <button className="btn-ghost !px-2.5" onClick={() => openDocs(true)} title="Documentation">📖</button>
-          <button className="btn-ghost !px-2.5" onClick={() => openTour(true)} title="Replay the welcome tour">?</button>
-          <button className="btn-primary" onClick={() => openWizard(true)}>
+          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openDocs(true)} title="Documentation">📖</button>
+          <button className="btn-ghost !px-2.5 hidden md:inline-flex" onClick={() => openTour(true)} title="Replay the welcome tour">?</button>
+          <button className="btn-primary hidden md:inline-flex" onClick={() => openWizard(true)}>
             + New Bot
           </button>
         </div>

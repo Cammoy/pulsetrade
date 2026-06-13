@@ -29,7 +29,7 @@ export default function BotDetail() {
   const sched = bot.schedule
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" onClick={() => selectBot(null)}>
+    <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-6" onClick={() => selectBot(null)}>
       <div
         className="glass max-h-[92vh] w-full max-w-3xl overflow-auto !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl"
         onClick={(e) => e.stopPropagation()}

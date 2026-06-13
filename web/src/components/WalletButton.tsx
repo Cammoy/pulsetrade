@@ -14,15 +14,15 @@ export default function WalletButton() {
 
   if (isConnected && address) {
     return (
-      <button onClick={() => disconnect()} title="Click to disconnect" className="btn-ghost group">
+      <button onClick={() => disconnect()} title="Click to disconnect" className="btn-ghost group shrink-0 whitespace-nowrap">
         <span className="h-2 w-2 rounded-full bg-emerald-400" />
         <span className="font-mono text-xs">{short(address)}</span>
         {bal && (
-          <span className="text-xs text-slate-400">
+          <span className="hidden text-xs text-slate-400 sm:inline">
             {Number(bal.formatted).toFixed(4)} {bal.symbol}
           </span>
         )}
-        {chain && <span className="chip bg-white/10 text-slate-300">{chain.name}</span>}
+        {chain && <span className="chip hidden bg-white/10 text-slate-300 sm:inline-flex">{chain.name}</span>}
         <span className="hidden text-xs text-rose-300 group-hover:inline">×</span>
       </button>
     )
@@ -53,12 +53,13 @@ export default function WalletButton() {
 
   return (
     <div className="relative">
-      <button className="btn-ghost" disabled={isPending} onClick={() => setOpen((o) => !o)}>
+      <button className="btn-ghost shrink-0 whitespace-nowrap" disabled={isPending} onClick={() => setOpen((o) => !o)}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="2" y="6" width="20" height="14" rx="3" />
           <path d="M16 12h4M2 10h20" />
         </svg>
-        Connect Wallet
+        <span className="sm:hidden">Connect</span>
+        <span className="hidden sm:inline">Connect Wallet</span>
       </button>
 
       {open && (

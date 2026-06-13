@@ -31,8 +31,8 @@ export default function AiBot() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm" onClick={() => openAi(false)}>
-      <div className="glass w-full max-w-lg border-white/10 bg-[#0b0f1a]/95 p-5" onClick={(e) => e.stopPropagation()}>
+    <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openAi(false)}>
+      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-lg overflow-auto !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-lg font-bold text-white">🤖 AI Trader</h2>
