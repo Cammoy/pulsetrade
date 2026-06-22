@@ -9,24 +9,68 @@
 // - a manual stop sweeps ALL proceeds to native
 // - every fill updates the persistent monthly ledger (state.monthly)
 
-import { state, save, uid, monthKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State, type Tournament, type Follow } from './store.js'
-import { networkById, tokenOf, allPriceIds } from './networks.js'
-import { getSpotPrices, getCandles, spot, poolPrice, refreshPoolPrice } from './prices.js'
-import { strategyById, type Ctx } from './strategies.js'
+import { state, save, flushNow, uid, monthKey, dayKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State, type Tournament, type Follow, type Withdrawal } from './store.js'
+import { recordTrade, tradeDbReady } from './db.js'
+import { networkById, tokenOf, allPriceIds, type Network } from './networks.js'
+import { getSpotPrices, getCandles, spot, spotFresh, poolPriceFresh, refreshPoolPrice, spotStale, poolLiquidityUsd } from './prices.js'
+import { strategyById, type Ctx, type Action } from './strategies.js'
 import { RISK } from './risk.js'
-import { liveReady, executeSwap } from './live.js'
-import { solanaLiveReady, executeSolanaSwap, lamportsForUsd, baseUnitsForQty, SOL_MINT } from './live-solana.js'
+import { lamportsForUsd, baseUnitsForQty, SOL_MINT } from './live-solana.js'
 import { screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
-import { walletTokenSignal, walletRecentBuys, trackingReady as smartMoneyReady } from './smartmoney.js'
+import { walletCopySignal, walletRecentBuys, trackingReady as smartMoneyReady, MAINNET_CG_IDS } from './smartmoney.js'
 import { getAiSignal } from './ai-trader.js'
-import { parseUnits } from 'viem'
+import { SLIPPAGE_PER_SIDE as SLIPPAGE, gasReserveMult } from './costs.js'
+import { EVM_ADDR } from './validators.js'
+import { live } from './live-registry.js'
+import { runExclusive, drainLanes } from './lanes.js'
+import { providerHealth, alertConfigured, notifyAsync } from './health.js'
+import { broadcast, setBroadcast, type Broadcast } from './broadcast.js'
+import { creditVault, vaultBalance } from './vault.js'
+// Re-export the profit-vault / withdrawal API (moved to ./vault.js) so app.ts keeps
+// importing profitVault/listWithdrawals/requestWithdrawal off './engine.js'.
+export { profitVault, listWithdrawals, requestWithdrawal } from './vault.js'
+import {
+  checkDailyCap,
+  recordDailySpend,
+  evaluateBreaker,
+  evaluateLiveCreate,
+  freshCopySignal,
+  copyRefreshSignal,
+  clampLiveSell,
+  snipeSizeError,
+  tokenExposureError,
+} from './safety-math.js'
+// Re-export the pure safety helpers so existing importers (daily-cap.test.ts,
+// copy-signal.test.ts) keep resolving them off './engine.js'. The STATEFUL wrappers
+// that bind these to live engine state stay defined below.
+export { checkDailyCap, recordDailySpend, evaluateBreaker, evaluateLiveCreate, freshCopySignal, copyRefreshSignal, clampLiveSell, snipeSizeError, tokenExposureError }
+export type { DailyCap } from './safety-math.js'
+import { parseUnits, getAddress } from 'viem'
 
 const TICK_MS = 20_000
-const SLIPPAGE = 0.0015
+// |realized P&L| below this ($0.01) is break-even/dust — not counted as a win or loss,
+// so a meaningless round trip can't inflate the win rate. [P2-15]
+const DUST_PNL = 0.01
 
-type Broadcast = (msg: object) => void
-let broadcast: Broadcast = () => {}
+// ── Activity-log number formatting (cosmetic — never touches accounting) ──────
+// Sub-cent token prices must not collapse to "$0" (toLocaleString rounds at 3dp),
+// and million-unit memecoin quantities must not render in scientific notation.
+function fmtPx(p: number): string {
+  if (!Number.isFinite(p) || p <= 0) return '0'
+  if (p >= 1) return p.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  // sub-$1: ~4 significant figures, fixed-notation even for tiny prices (1e-9..1)
+  const dp = Math.min(18, Math.max(2, 3 - Math.floor(Math.log10(p))))
+  return p.toFixed(dp).replace(/\.?0+$/, '')
+}
+function fmtAmt(q: number): string {
+  if (!Number.isFinite(q)) return '0'
+  return q >= 1000 ? q.toLocaleString('en-US', { maximumFractionDigits: 0 }) : String(+q.toPrecision(6))
+}
+
+// Broadcast (./broadcast.js), the live-executor registry (./live-registry.js), the
+// per-lane swap FIFO runExclusive (./lanes.js) and gasReserveMult (./costs.js) are
+// shared with vault.ts — imported above, not defined here.
 
 function log(bot: Bot, msg: string, kind: 'info' | 'buy' | 'sell' | 'warn' = 'info') {
   bot.log.push({ ts: Date.now(), msg, kind })
@@ -43,55 +87,103 @@ export function inSchedule(bot: Bot, d = new Date()): boolean {
     : h >= s.startHour || h < s.endHour // overnight window
 }
 
-function month(ts: number) {
-  return (state.monthly[monthKey(ts)] ??= emptyMonth())
+function month(ts: number, mode: 'paper' | 'live') {
+  const dict = mode === 'live' ? state.monthly.live : state.monthly.paper
+  return (dict[monthKey(ts)] ??= emptyMonth())
 }
 
-/** Current USD price for a bot: DEX pool for sniped tokens, else CoinGecko. */
+/** A network with a REAL on-chain executor — the single gate for live-fund execution,
+ *  the daily/lifetime live-spend cap, and breaker accrual. EVM chains and Solana only;
+ *  market/ICP/holdings stay paper even in live mode. [INC-1] */
+const hasLiveExecutor = (net: { evm?: boolean; id: string } | null | undefined): boolean =>
+  !!net && (net.evm === true || net.id === 'solana')
+
+/** Any bot that trades LIVE on a real chain. Gates the GLOBAL live-safety machinery
+ *  (fleet-drawdown cap, on-chain realHeld reconcile) so it engages whenever a live bot
+ *  EXISTS — independent of which workspace is currently being viewed. */
+const hasLiveBots = (): boolean =>
+  state.bots.some((b) => b.mode === 'live' && hasLiveExecutor(networkById(b.network)))
+
+/** Current USD price for a bot: DEX pool for sniped tokens, else CoinGecko.
+ *  Returns undefined when the price is STALE — a frozen price must never drive a
+ *  stop-loss/take-profit decision or size a live trade (it would never "see" a
+ *  real drop, and could mis-size a swap). The tick skips; the UI shows no price. */
 function priceForBot(bot: Bot): number | undefined {
   if (bot.pool) {
     const net = networkById(bot.network)
-    return net ? poolPrice(net.gt, bot.pool.poolAddress) : undefined
+    return net ? poolPriceFresh(net.gt, bot.pool.poolAddress) : undefined
   }
-  if (bot.cg) return spot(bot.cg) // market bots price straight from CoinGecko
+  // Per-id freshness (not the global spotStale()): CoinGecko silently drops delisted/
+  // renamed ids from the batch, and the global staleness is held fresh by the majors —
+  // so a dropped coin would otherwise serve a permanently-frozen price that a stop-loss
+  // / take-profit could never react to. spotFresh() returns undefined when THIS coin is stale.
+  if (bot.cg) return spotFresh(bot.cg) // market bots price straight from CoinGecko
   const token = tokenOf(bot.network, bot.token)
-  return token ? spot(token.cg) : undefined
+  return token ? spotFresh(token.cg) : undefined
 }
 
-function execBuy(bot: Bot, price: number, usd: number, reason: string) {
+function execBuy(bot: Bot, price: number, usd: number, reason: string, realQty?: number) {
   const net = networkById(bot.network)!
   const fee = net.avgGasUsd + usd * SLIPPAGE
-  const qty = (usd - fee) / price
+  // LIVE: book the ACTUAL tokens received (measured on-chain), so position/avgCost
+  // reflect the real fill — on thin pools that's materially fewer units than the
+  // quote implied. PAPER: model the fill from the quote price.
+  const qty = realQty !== undefined ? realQty : (usd - fee) / price
+  if (!(qty > 0)) return // a live buy that received ~nothing — don't book a phantom position
+  const effPrice = realQty !== undefined ? usd / qty : price // real entry price on a live fill
   const p = bot.position
   // Cost basis = total dollars in (fees included) / units held.
-  p.avgCostUsd = p.qty + qty > 0 ? (p.avgCostUsd * p.qty + usd) / (p.qty + qty) : price
+  p.avgCostUsd = p.qty + qty > 0 ? (p.avgCostUsd * p.qty + usd) / (p.qty + qty) : effPrice
   p.qty += qty
   p.costUsd += usd
   if (!p.openedAt) p.openedAt = Date.now()
   bot.cashUsd -= usd
   bot.stats.feesUsd += fee
   const ts = Date.now()
-  const m = month(ts)
+  const m = month(ts, bot.mode) // the bot's OWN workspace, not the active view
   m.volumeUsd += usd
   m.feesUsd += fee
   const trade: Trade = {
     id: uid(), botId: bot.id, ts, side: 'buy', network: bot.network,
-    token: bot.token, qty, priceUsd: price, usd, feeUsd: fee, reason,
-    mode: state.settings.mode,
+    token: bot.token, qty, priceUsd: effPrice, usd, feeUsd: fee, reason,
+    mode: bot.mode,
   }
   state.trades.push(trade)
-  log(bot, `BUY $${usd.toFixed(2)} ${bot.token} @ $${price.toLocaleString()} — ${reason}`, 'buy')
-  broadcast({ type: 'trade', trade })
+  recordTrade(trade) // full history → SQLite ledger (no-op if disabled)
+  log(bot, `BUY $${usd.toFixed(2)} ${bot.token} @ $${fmtPx(price)} — ${reason}`, 'buy')
+  // Carry the freshly-mutated monthly ledger on the trade frame so the Monthly P&L
+  // (volume/fees here) updates INSTANTLY, not on the next ~20s snapshot. [realtime]
+  broadcast({ type: 'trade', trade, monthly: state.monthly })
 }
 
-function execSell(bot: Bot, price: number, fraction: number, reason: string, exit: boolean, sweepAll = false) {
+function execSell(bot: Bot, price: number, fraction: number, reason: string, exit: boolean, sweepAll = false, realQty?: number, realProceedsUsd?: number) {
   const net = networkById(bot.network)!
   const p = bot.position
-  const sellQty = p.qty * Math.min(1, fraction)
+  // LIVE: book the ACTUAL units sold on-chain (clamped to the book so it can't go
+  // negative). PAPER: sell the requested fraction of the position.
+  const sellQty = realQty !== undefined ? Math.min(realQty, p.qty) : p.qty * Math.min(1, fraction)
   if (sellQty <= 0) return
   const gross = sellQty * price
-  const fee = net.avgGasUsd + gross * SLIPPAGE
-  const proceeds = gross - fee
+  // LIVE: proceeds = the native/USDT actually RECEIVED on-chain (measured in-lane),
+  // so realized P&L, sweeps and the loss-breaker track the wallet, not the quote —
+  // and `fee` becomes the IMPLIED real cost (slippage + gas). PAPER (realProceedsUsd
+  // undefined): the modeled fee/proceeds, unchanged. [MP-1]
+  const modeledFee = net.avgGasUsd + gross * SLIPPAGE
+  // LIVE measured proceeds correspond to the FULL on-chain sale (realQty units). When a
+  // trusted full-exit liquidates MORE units than the paper book held (per-fill float
+  // truncation or a positive rebase), sellQty is clamped to the book — scale the measured
+  // proceeds down to the booked fraction so the surplus units' value isn't credited as
+  // pure profit on this trade. (realQty===sellQty → factor 1, unchanged.) [reconcile]
+  const proceeds =
+    realProceedsUsd !== undefined
+      ? realQty !== undefined && realQty > sellQty
+        ? realProceedsUsd * (sellQty / realQty)
+        : realProceedsUsd
+      : gross - modeledFee
+  // Live (measured): fee is the IMPLIED real cost (gross − measured proceeds). Paper:
+  // keep the EXACT modeled fee — re-deriving it from gross−proceeds drifts by a
+  // sub-nanodollar float error, so the paper path stays byte-identical to before. [MP-1]
+  const fee = realProceedsUsd !== undefined ? Math.max(0, gross - proceeds) : modeledFee
   const costBasis = sellQty * p.avgCostUsd
   const pnl = proceeds - costBasis
 
@@ -117,101 +209,569 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
   if (swept) {
     bot.stats.nativeTakenQty += swept.qty
     bot.stats.nativeTakenUsd += swept.usd
+    // Bank the swept profit in the withdrawal vault, keyed by chain + asset + the
+    // bot's WORKSPACE — a paper bot's simulated sweep can never become live-withdrawable.
+    creditVault(bot.network, toUsdt ? 'usdt' : 'native', swept.qty, bot.mode)
   }
 
   bot.stats.realizedUsd += pnl
   bot.stats.feesUsd += fee
-  // Every sell closes a round trip against cost basis — count it.
-  if (pnl >= 0) bot.stats.wins++
-  else bot.stats.losses++
+  // Strict win/loss: only a real gain is a WIN. A break-even (pnl≈0) or dust round trip
+  // is NEITHER — counting break-evens as wins inflates the exact win-rate the owner uses
+  // to judge edge. |pnl| below a cent is noise, not a result. [P2-15]
+  if (pnl > DUST_PNL) bot.stats.wins++
+  else if (pnl < -DUST_PNL) bot.stats.losses++
   if (exit || p.qty === 0) bot.state.lastExitAt = Date.now()
 
   const ts = Date.now()
-  const m = month(ts)
+  const m = month(ts, bot.mode) // the bot's OWN workspace, not the active view
   m.volumeUsd += gross
   m.feesUsd += fee
   m.realizedUsd += pnl
-  if (pnl >= 0) m.wins++
-  else m.losses++
+  if (pnl > DUST_PNL) m.wins++
+  else if (pnl < -DUST_PNL) m.losses++
   m.byRisk[bot.risk] = (m.byRisk[bot.risk] ?? 0) + pnl
   if (swept) m.nativeTakenUsd += swept.usd
 
   const trade: Trade = {
     id: uid(), botId: bot.id, ts, side: 'sell', network: bot.network,
     token: bot.token, qty: sellQty, priceUsd: price, usd: gross, feeUsd: fee,
-    reason, pnlUsd: +pnl.toFixed(6), sweptNative: swept, mode: state.settings.mode,
+    reason, pnlUsd: +pnl.toFixed(6), sweptNative: swept, mode: bot.mode,
   }
   state.trades.push(trade)
-  log(bot, `SELL ${sellQty.toPrecision(6)} ${bot.token} @ $${price.toLocaleString()} → P&L $${pnl.toFixed(2)}${swept ? ` (swept ${swept.qty.toPrecision(4)} ${swept.symbol})` : ''} — ${reason}`, 'sell')
-  broadcast({ type: 'trade', trade })
+  recordTrade(trade) // full history → SQLite ledger (no-op if disabled)
+  log(bot, `SELL ${fmtAmt(sellQty)} ${bot.token} @ $${fmtPx(price)} → P&L $${pnl.toFixed(2)}${swept ? ` (swept ${fmtAmt(swept.qty)} ${swept.symbol})` : ''} — ${reason}`, 'sell')
+  // Carry the freshly-mutated monthly ledger on the trade frame so the Monthly P&L
+  // (realized/wins/sweeps) updates INSTANTLY, not on the next ~20s snapshot. [realtime]
+  broadcast({ type: 'trade', trade, monthly: state.monthly })
+}
+
+/** The real measured base-unit delta of a confirmed swap (after−before of the
+ *  bot's token, read inside the lane). Absent on paper-only success branches. */
+type LiveDelta = { tokenAddress: string; decimals: number; baseUnits: bigint; proceedsUsd?: number; nativeSpentUsd?: number }
+
+/** Result of a live mirror attempt. `ok: true` means the paper fill may be
+ *  committed — either the on-chain swap confirmed (with `delta` present), or this
+ *  network is intentionally paper-only (market/ICP/sub-chain without keys, no
+ *  `delta`). `ok: false` means a real swap was attempted and FAILED (or would
+ *  desync), so the caller must NOT commit the paper fill. realHeld is mutated
+ *  IN-LANE by mirrorLive itself (so a concurrent same-token bot's clamp reads a
+ *  fresh value); `delta` is returned only for logging/tests. */
+type LiveResult = { ok: true; delta?: LiveDelta } | { ok: false; error: string }
+
+/** This bot's real on-chain holdings of its token, in base units. Defensive
+ *  parse: a malformed persisted value must never throw in the hot path. */
+const curHeld = (b: Bot): bigint => {
+  try {
+    return b.realHeld ? BigInt(b.realHeld) : 0n
+  } catch {
+    return 0n
+  }
 }
 
 /**
- * Fire the live on-chain swap mirroring a paper decision (best-effort).
- * Per-chain executors: EVM via 0x, Solana via Jupiter; ICP is wired into this
- * layer but stays paper until a verified KongSwap/ICPSwap canister integration
- * lands (its DEXes have no REST API — see README).
+ * Sign-gated, IN-LANE realHeld credit/debit from a measured balance delta.
+ * Called inside the runExclusive closure (right after the swap's after-read) so
+ * a concurrent same-token bot's clamp reads a fresh value. A buy must increase
+ * the bot-token balance and a sell must decrease it — a wrong sign means an
+ * external transfer straddled the swap, so we attribute 0 and warn rather than
+ * corrupt the ledger. The debit is capped at the bot's own holdings so it can
+ * never go negative by absorbing another bot's tokens. Returns attributed units.
  */
-async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: number, price: number) {
-  if (state.settings.mode !== 'live') return
+function applyHoldingDelta(bot: Bot, side: 'buy' | 'sell', before: bigint, after: bigint): bigint {
+  const mine = curHeld(bot)
+  if (side === 'buy') {
+    if (after <= before) {
+      log(bot, 'realHeld reconcile: buy did not increase balance — credited 0 (external transfer?)', 'warn')
+      return 0n
+    }
+    const credited = after - before
+    bot.realHeld = (mine + credited).toString()
+    return credited
+  }
+  if (before <= after) {
+    log(bot, 'realHeld reconcile: sell did not decrease balance — debited 0 (external transfer?)', 'warn')
+    return 0n
+  }
+  const sold = before - after
+  const debit = sold > mine ? mine : sold
+  if (sold > mine) log(bot, 'sell delta exceeded own attributed holdings — surplus flagged for reconcile', 'warn')
+  bot.realHeld = (mine - debit).toString()
+  return sold
+}
+
+/**
+ * Execute the on-chain swap that mirrors a paper decision and report whether the
+ * paper fill may be committed. Per-chain executors: EVM via 0x, Solana via
+ * Jupiter; ICP/market stay paper (no REST DEX). For sells the order is clamped
+ * to the wallet's real on-chain balance so a swap can never over-spend.
+ *
+ * IMPORTANT: returns `{ ok: false }` only when an attempted on-chain swap fails
+ * or can't be sized — so the caller leaves paper state untouched and pauses the
+ * bot. Paper-only networks return `{ ok: true }` so they keep simulating.
+ */
+async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: number, price: number, fullExit = false): Promise<LiveResult> {
+  if (bot.mode !== 'live') return { ok: true } // PAPER bot: nothing to mirror, regardless of the active workspace
   const net = networkById(bot.network)!
   if (net.id === 'market') {
     log(bot, 'Market-scope bots are paper-only — no on-chain execution', 'info')
-    return
+    return { ok: true }
   }
+  if (net.id === 'icp') {
+    log(bot, 'LIVE EXECUTION PENDING: ICP DEXes (KongSwap/ICPSwap) are canister-only — live executor not yet integrated; this trade stayed paper', 'warn')
+    return { ok: true }
+  }
+  // In LIVE mode, a bot on a real network whose executor is NOT configured must
+  // HALT — never commit a phantom paper fill (which would also burn the daily cap
+  // and desync the ledger from the wallet). ICP/market above are intentionally
+  // paper-only; these two are a misconfiguration the operator must fix.
+  if (net.evm && !live.liveReady()) {
+    return { ok: false, error: 'EVM live not configured — set ZEROX_API_KEY (0x routing) + a signer (BOT_WALLET_KEY or Turnkey). Bot paused; fix and resume.' }
+  }
+  if (net.id === 'solana' && !live.solanaLiveReady()) {
+    return { ok: false, error: 'Solana live not configured — set SOLANA_WALLET_KEY or Turnkey Solana. Bot paused; fix and resume.' }
+  }
+
   // Sniper bots carry their token address/decimals on bot.pool; others resolve
-  // from the curated list.
+  // from the curated list. An EVM/Solana live bot with no address is a misconfig
+  // we must NOT paper-commit (it would desync from reality).
   const tokenAddress = bot.pool?.tokenAddress ?? tokenOf(bot.network, bot.token)?.address
   const decimals = bot.pool?.decimals ?? tokenOf(bot.network, bot.token)?.decimals
   if (!tokenAddress || decimals === undefined) {
-    log(bot, 'LIVE EXECUTION SKIPPED: token address unknown', 'warn')
-    return
+    log(bot, 'LIVE EXECUTION BLOCKED: token address unknown', 'warn')
+    return { ok: false, error: 'token address unknown' }
   }
+
   try {
     const nativePrice = spot(net.native.cg)
-    if (side === 'buy' && !nativePrice) throw new Error('no native price for sizing')
+    // Never size a live buy off a missing OR stale native price — a frozen price
+    // would send the wrong amount of real ETH/SOL.
+    if (side === 'buy' && (!nativePrice || spotStale())) throw new Error('native price unavailable/stale — refusing to size a live buy')
 
+    // Serialize per wallet+chain so concurrent ticks can't race the nonce or
+    // both read the same balance before either sell settles.
+    const lower = tokenAddress.toLowerCase()
     if (net.evm) {
-      if (!liveReady()) return // EVM live keys not configured — paper only
-      const sellAmount =
-        side === 'buy'
-          ? parseUnits((usd / nativePrice!).toFixed(18), 18) // native in
-          : parseUnits(qty.toFixed(decimals), decimals)
-      const hash = await executeSwap({
-        chainId: net.chainId,
-        tokenAddress,
-        side,
-        sellAmountBaseUnits: sellAmount,
-        // Sells land in the bot's sweep target (USDT or native).
-        buyTokenAddress: side === 'sell' && bot.sweepTo === 'usdt' ? net.usdt.address : undefined,
+      return await runExclusive<LiveResult>(`evm:${net.chainId}`, async () => {
+        const before = await live.tokenBalanceBaseUnits(net.chainId, tokenAddress)
+        let sellAmount: bigint
+        let fairBuyBaseUnits: bigint | undefined
+        let nativeBefore: bigint | undefined // measured native balance pre-buy → real outflow [P1-2]
+        if (side === 'buy') {
+          sellAmount = parseUnits((usd / nativePrice!).toFixed(18), 18) // native in
+          // Fair token-out at the current token price (no impact) — lets executeSwap
+          // abort a thin/bad route whose quoted out is far below fair. [EVM impact guard]
+          fairBuyBaseUnits = price > 0 ? parseUnits((usd / price).toFixed(decimals), decimals) : undefined
+          // Keep a native gas reserve so the bot can always pay gas to SELL out of
+          // what it buys — without it a bot can spend its native down and strand a
+          // position with no gas to exit. Refuse (pause) rather than open a fill we
+          // couldn't unwind. [P1-3]
+          const reserveUsd = gasReserveMult() * net.avgGasUsd
+          const reserveNative = parseUnits((reserveUsd / nativePrice!).toFixed(18), 18)
+          const nativeBal = await live.nativeBalanceWei(net.chainId)
+          if (nativeBal < sellAmount + reserveNative)
+            return { ok: false, error: `insufficient native for buy + gas reserve — keep ~$${reserveUsd.toFixed(2)} native for the exit; fund the bot wallet` }
+          nativeBefore = nativeBal
+        } else {
+          // Clamp: min(paper-want, wallet-have, THIS bot's attributed holdings). `have`
+          // is the hard over-send guard; `mine` is soft per-bot attribution that degrades
+          // to have (never zero) when stale-low/untrusted. Shared pure clamp [MP-2].
+          const want = parseUnits(qty.toFixed(decimals), decimals)
+          const r = clampLiveSell(want, before, curHeld(bot), bot.state.realHeldUntrusted, fullExit)
+          if (r.exceedsAttributed) log(bot, 'sell exceeds attributed on-chain holdings — clamped', 'warn')
+          sellAmount = r.sell
+          if (sellAmount <= 0n) return { ok: false, error: 'no on-chain balance to sell' }
+        }
+        // Measure the sweep asset RECEIVED on a sell so realized P&L tracks the
+        // WALLET, not the quote price. Native nets its own gas (proceeds − gas);
+        // USDT is the stable out. recv<=0 (unmeasurable) → fall back to the model. [MP-1]
+        const sweepUsdt = bot.sweepTo === 'usdt'
+        const readSweepEvm = () => (sweepUsdt ? live.tokenBalanceBaseUnits(net.chainId, net.usdt.address) : live.nativeBalanceWei(net.chainId))
+        const sweepBefore = side === 'sell' ? await readSweepEvm() : 0n
+        const hash = await live.executeSwap({
+          chainId: net.chainId,
+          tokenAddress,
+          side,
+          sellAmountBaseUnits: sellAmount,
+          fairBuyBaseUnits, // buys only — thin-route impact backstop
+          // Sells land in the bot's sweep target (USDT or native).
+          buyTokenAddress: side === 'sell' && bot.sweepTo === 'usdt' ? net.usdt.address : undefined,
+        })
+        // The swap is CONFIRMED on-chain now. A transient RPC failure on the post-swap
+        // measurement reads must NEVER throw past this point — that would return ok:false and
+        // make settle() skip booking a spend that REALLY happened, silently under-counting the
+        // live-spend cap. An unreadable post-state → UNMEASURABLE delta (baseUnits 0), which
+        // settle commits at the quote estimate + flags the position untrusted for reconcile.
+        let after = before
+        try { after = await live.tokenBalanceBaseUnits(net.chainId, tokenAddress) } catch { /* post-confirm read failed → unmeasurable, never a lost confirmation */ }
+        const baseUnits = applyHoldingDelta(bot, side, before, after)
+        let proceedsUsd: number | undefined
+        let nativeSpentUsd: number | undefined
+        if (side === 'sell') {
+          let recv = 0n
+          try { recv = (await readSweepEvm()) - sweepBefore } catch { /* unmeasurable → execSell models proceeds */ }
+          // Value the REAL sweep asset received. USDT = ~$1 stable. Native: use the last-known
+          // native price even mid-backoff — `recv` is a real on-chain amount that already
+          // reflects the exit's price impact, so measuring it (at a ≤few-min-old native price)
+          // feeds the loss-breaker far truer P&L than the impact-blind modeled fallback would.
+          if (recv > 0n) proceedsUsd = sweepUsdt ? (Number(recv) / 10 ** net.usdt.decimals) * (spot(net.usdt.cg) ?? 1) : nativePrice ? (Number(recv) / 1e18) * nativePrice : undefined
+        } else if (nativeBefore !== undefined && nativePrice) {
+          // Measure the REAL native outflow (input + gas) so the daily/lifetime spend caps
+          // track the wallet, not the quote. Only when the after-read is a sane DECREASE;
+          // an unreadable/wrong-direction read → undefined → settle falls back to the
+          // intended USD (never over/under-books a confirmed buy). [P1-2]
+          let nativeAfter = nativeBefore
+          try { nativeAfter = await live.nativeBalanceWei(net.chainId) } catch { /* unmeasurable → modeled */ }
+          if (nativeAfter < nativeBefore) nativeSpentUsd = (Number(nativeBefore - nativeAfter) / 1e18) * nativePrice
+        }
+        log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
+        return { ok: true, delta: { tokenAddress: lower, decimals, baseUnits, proceedsUsd, nativeSpentUsd } }
       })
-      log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
-    } else if (net.id === 'solana') {
-      if (!solanaLiveReady()) {
-        log(bot, 'LIVE EXECUTION SKIPPED: set SOLANA_WALLET_KEY to trade Solana live — this trade stayed paper', 'warn')
+    }
+
+    // Solana — same in-lane measure/clamp/attribute as EVM, via the SPL seam.
+    return await runExclusive<LiveResult>('solana', async () => {
+      const before = await live.splTokenBalanceBaseUnits(tokenAddress)
+      // Sweep-asset (SOL/USDT) received on a sell → real proceeds. SOL nets gas. [MP-1]
+      const sweepUsdt = bot.sweepTo === 'usdt'
+      const sweepMint = sweepUsdt ? net.usdt.address : SOL_MINT
+      const sweepBefore = side === 'sell' ? await live.splTokenBalanceBaseUnits(sweepMint) : 0n
+      let sig: string
+      let solBefore: bigint | undefined // measured SOL balance pre-buy → real outflow [P1-2]
+      if (side === 'buy') {
+        // Keep a native (SOL) gas reserve — see the EVM branch above. [P1-3]
+        const lamports = lamportsForUsd(usd, nativePrice!)
+        const reserveUsd = gasReserveMult() * net.avgGasUsd
+        const reserveLamports = lamportsForUsd(reserveUsd, nativePrice!)
+        const solBal = await live.splTokenBalanceBaseUnits(SOL_MINT)
+        if (solBal < lamports + reserveLamports)
+          return { ok: false, error: `insufficient SOL for buy + gas reserve — keep ~$${reserveUsd.toFixed(2)} SOL for the exit; fund the bot wallet` }
+        solBefore = solBal
+        sig = await live.executeSolanaSwap({ inputMint: SOL_MINT, outputMint: tokenAddress, amountBaseUnits: lamports })
+      } else {
+        // Same shared pure clamp as the EVM branch [MP-2]; only `want`'s base-unit
+        // conversion differs (SPL decimals via baseUnitsForQty).
+        const want = baseUnitsForQty(qty, decimals)
+        const r = clampLiveSell(want, before, curHeld(bot), bot.state.realHeldUntrusted, fullExit)
+        if (r.exceedsAttributed) log(bot, 'sell exceeds attributed on-chain holdings — clamped', 'warn')
+        const cap = r.sell
+        if (cap <= 0n) return { ok: false, error: 'no on-chain balance to sell' }
+        sig = await live.executeSolanaSwap({
+          inputMint: tokenAddress,
+          // Sells land in the bot's sweep target (USDT or SOL).
+          outputMint: bot.sweepTo === 'usdt' ? net.usdt.address : SOL_MINT,
+          amountBaseUnits: cap,
+        })
+      }
+      // Post-confirm reads are resilient (see EVM branch): a confirmed swap is never discarded
+      // by a transient RPC failure, so the spend booking + P&L always run.
+      let after = before
+      try { after = await live.splTokenBalanceBaseUnits(tokenAddress) } catch { /* post-confirm read failed → unmeasurable */ }
+      const baseUnits = applyHoldingDelta(bot, side, before, after)
+      let proceedsUsd: number | undefined
+      let nativeSpentUsd: number | undefined
+      if (side === 'sell') {
+        let recv = 0n
+        try { recv = (await live.splTokenBalanceBaseUnits(sweepMint)) - sweepBefore } catch { /* unmeasurable → modeled */ }
+        // Measure the REAL SOL/USDT received, valued at the last-known price (see EVM branch) —
+        // captures exit impact for the loss-breaker rather than discarding to the modeled proceeds.
+        if (recv > 0n) proceedsUsd = sweepUsdt ? (Number(recv) / 10 ** net.usdt.decimals) * (spot(net.usdt.cg) ?? 1) : nativePrice ? (Number(recv) / 1e9) * nativePrice : undefined // SOL = 9 dp
+      } else if (solBefore !== undefined && nativePrice) {
+        // Real SOL outflow (input + fees) for the spend caps — sane-decrease only, else
+        // settle falls back to the intended USD. SOL = 9 dp. [P1-2]
+        let solAfter = solBefore
+        try { solAfter = await live.splTokenBalanceBaseUnits(SOL_MINT) } catch { /* unmeasurable → modeled */ }
+        if (solAfter < solBefore) nativeSpentUsd = (Number(solBefore - solAfter) / 1e9) * nativePrice
+      }
+      log(bot, `On-chain ${side} confirmed (Jupiter): ${sig.slice(0, 18)}…`, 'info')
+      return { ok: true, delta: { tokenAddress: lower, decimals, baseUnits, proceedsUsd, nativeSpentUsd } }
+    })
+  } catch (e: unknown) {
+    const error = e instanceof Error ? e.message : String(e)
+    log(bot, `LIVE EXECUTION FAILED (${side}): ${error}`, 'warn')
+    return { ok: false, error }
+  }
+}
+
+/** Live execution failed — leave paper state untouched and pause the bot so it
+ *  stops trading until the operator investigates (no phantom fills, no retries). */
+function haltLive(bot: Bot, side: 'buy' | 'sell', error: string) {
+  bot.status = 'paused'
+  log(bot, `Paused — live ${side} failed (${error}). Paper state left untouched; resume to retry.`, 'warn')
+  notifyAsync('bot-halted', `${bot.name} paused — live ${side} failed: ${error}`)
+}
+
+// ── Daily live-spend cap ─────────────────────────────────────────────────────
+// A safety bound on how much the bot may SPEND on live buys per day. Turnkey
+// Policies are stateless per-signature, so a cumulative daily cap is enforced
+// here in the engine (and complements Turnkey's per-tx caps). 0 = no cap.
+export const maxLiveUsdPerDay = (): number => Math.max(0, Number(process.env.MAX_LIVE_USD_PER_DAY) || 0)
+
+// checkDailyCap / recordDailySpend / DailyCap — pure, in ./safety-math.js (re-exported above).
+
+/** USD spent on live buys so far today (0 once the day rolls over). */
+export const spentTodayUsd = (): number => (state.liveSpend.day === dayKey() ? state.liveSpend.usd : 0)
+
+// ── Account circuit breaker ──────────────────────────────────────────────────
+// A hard stop that pauses ALL bots when live trading bleeds past a cumulative
+// loss or a lifetime-spend ceiling, requiring an explicit manual re-arm (it does
+// NOT reset on a day roll like the daily cap). The single most important missing
+// guardrail for an unattended live account. Both limits 0 = off.
+export const maxCumulativeLossUsd = (): number => Math.max(0, Number(process.env.MAX_CUMULATIVE_LOSS_USD) || 0)
+export const maxLiveUsdTotal = (): number => Math.max(0, Number(process.env.MAX_LIVE_USD_TOTAL) || 0)
+// Live-fleet trailing-equity drawdown cap (opt-in; 0 = off). Catches UNREALIZED bleed
+// the realized-loss breaker misses: trips if the live fleet's mark-to-market value falls
+// this % below its high-water mark since the last re-arm. 0 = off (default → no behaviour).
+export const maxFleetDrawdownPct = (): number => Math.max(0, Number(process.env.MAX_FLEET_DRAWDOWN_PCT) || 0)
+let fleetPeak = 0 // high-water mark of live-fleet equity (resets on resetBreaker)
+
+// ── Exposure caps (sniper sizing + per-token concentration) ───────────────────
+// Both opt-in (0 = off) and sized as a % of the lifetime live-spend ceiling
+// (MAX_LIVE_USD_TOTAL) — the only well-defined account-size figure the operator sets
+// up front — so they're meaningful from the very first bot, unlike a "% of current
+// fleet equity" that would block the first bot. [P0-6a, P1-5]
+export const maxSnipeEquityPct = (): number => Math.max(0, Number(process.env.MAX_SNIPE_EQUITY_PCT) || 0)
+export const maxTokenExposurePct = (): number => Math.max(0, Number(process.env.MAX_TOKEN_EXPOSURE_PCT) || 0)
+
+/** Canonical identity of the token a bot trades: the real contract for snipers
+ *  (symbols collide across scam tokens), else network:symbol for curated coins. */
+const botTokenKey = (network: string, token: string, tokenAddress?: string): string =>
+  `${network}:${(tokenAddress ?? token).toLowerCase()}`
+
+/** USD currently exposed to one token across ALL live on-chain bots sharing the wallet
+ *  (open-position value at the current price). The concentration cap (P1-5) is checked
+ *  against this + the new buy before any live buy or live-bot create. */
+function liveTokenExposureUsd(key: string): number {
+  let usd = 0
+  for (const b of state.bots) {
+    if (b.mode !== 'live') continue
+    if (!hasLiveExecutor(networkById(b.network))) continue
+    if (botTokenKey(b.network, b.token, b.pool?.tokenAddress) !== key) continue
+    const price = priceForBot(b) ?? b.position.avgCostUsd
+    usd += b.position.qty * price
+  }
+  return usd
+}
+
+/** Stateful wrapper: would a live buy of `addUsd` into `key` breach the per-token
+ *  concentration cap? Returns an error string to skip/reject with, or null. */
+const tokenExposureGuard = (key: string, token: string, addUsd: number): string | null =>
+  tokenExposureError(addUsd, liveTokenExposureUsd(key), maxLiveUsdTotal(), maxTokenExposurePct(), token)
+
+// evaluateBreaker — pure, in ./safety-math.js (re-exported above).
+
+/** Trip the breaker: pause every active bot, persist. Idempotent. */
+function tripBreaker(reason: string): void {
+  if (state.breaker.tripped) return
+  state.breaker.tripped = true
+  state.breaker.reason = reason
+  state.breaker.trippedAt = Date.now()
+  // Pause ONLY bots that actually trade live on-chain. The breaker is a LIVE-money
+  // safety control — it must NOT halt PAPER bots (a separate workspace, zero real
+  // risk) or paper-executed market/ICP bots. `breaker.tripped` still blocks every new
+  // live buy in settle(), so live exposure is fully frozen regardless of what's paused.
+  let paused = 0
+  for (const b of state.bots) {
+    if (!(b.status === 'running' || b.status === 'scheduled') || b.mode !== 'live') continue
+    const net = networkById(b.network)
+    if (!hasLiveExecutor(net)) continue
+    b.status = 'paused'
+    log(b, `⛔ CIRCUIT BREAKER — ${reason}. Live bots paused; reset it from the ⛔ HALTED button to resume.`, 'warn')
+    paused++
+  }
+  console.error(`[engine] ⛔ CIRCUIT BREAKER TRIPPED — ${reason}. ${paused} live bot(s) paused (paper bots unaffected).`)
+  notifyAsync('breaker-tripped', `${reason}. ${paused} live bot(s) paused — manual re-arm required.`)
+  flushNow()
+}
+
+/** Trip the breaker if a cumulative-loss/spend limit is breached. */
+function tripBreakerIfNeeded(): void {
+  const v = evaluateBreaker(state.breaker, maxCumulativeLossUsd(), maxLiveUsdTotal())
+  if (v.tripped) tripBreaker(v.reason)
+}
+
+/** The single place live realized P&L reaches the account circuit breaker. Every real
+ *  on-chain sell — strategy settle() AND forced/manual stop liquidations — must funnel
+ *  its realized delta through here, or a loss realized via a stop escapes the
+ *  cumulative-loss ceiling (the most important unattended-account guardrail). */
+function accrueLiveRealized(bot: Bot, beforeRealized: number): void {
+  state.breaker.realizedUsd += bot.stats.realizedUsd - beforeRealized
+  tripBreakerIfNeeded()
+}
+
+/** Operator re-arm: clear the breaker and reset its accumulators. */
+export function resetBreaker(): State['breaker'] {
+  state.breaker = { tripped: false, reason: '', trippedAt: null, realizedUsd: 0, spentUsd: 0 }
+  fleetPeak = 0 // re-arm restarts the drawdown high-water mark
+  flushNow()
+  return state.breaker
+}
+
+// evaluateLiveCreate — pure, in ./safety-math.js (re-exported above).
+
+/** A bot born now is real-live (touches funds + the live caps) only in live mode on an
+ *  on-chain network — market/ICP/holdings bots stay paper even in the live workspace. */
+const bornRealLive = (net: { evm?: boolean; id: string } | undefined): boolean =>
+  state.settings.mode === 'live' && hasLiveExecutor(net)
+
+/** Wrapper: evaluate the live-create guard against current engine state. */
+const liveCreateError = (budget: number, net: { evm?: boolean; id: string } | undefined): string | null =>
+  evaluateLiveCreate(budget, bornRealLive(net), state.breaker, maxLiveUsdTotal())
+
+export const breakerState = (): State['breaker'] => state.breaker
+
+/** Opt-in live-fleet trailing-equity drawdown cap. Trips the breaker if the live fleet's
+ *  mark-to-market equity falls MAX_FLEET_DRAWDOWN_PCT below its high-water mark. Equity is
+ *  swept-profit-AWARE (cash + open position + banked native) so taking profit to native
+ *  never reads as drawdown; only real on-chain bots count. Default off (cap ≤ 0). */
+function checkFleetDrawdown(): void {
+  const capPct = maxFleetDrawdownPct()
+  if (capPct <= 0 || !hasLiveBots() || state.breaker.tripped) return
+  let equity = 0
+  let liveBots = 0
+  for (const b of state.bots) {
+    const net = networkById(b.network)
+    if (b.mode !== 'live' || !hasLiveExecutor(net)) continue // LIVE on-chain bots only
+    // Count ALL live on-chain bots, including STOPPED ones — a stopped bot's banked value
+    // is still the fleet's, so excluding it would drop equity and spuriously trip on a
+    // mere stop. Status changes must not move equity; only DELETION re-baselines the peak.
+    const price = priceForBot(b) ?? b.position.avgCostUsd
+    equity += b.cashUsd + b.position.qty * price + b.stats.nativeTakenUsd // cash + open position + banked profit
+    liveBots++
+  }
+  if (liveBots === 0 || equity <= 0) return
+  if (equity > fleetPeak) fleetPeak = equity
+  const ddPct = ((fleetPeak - equity) / fleetPeak) * 100
+  if (ddPct >= capPct) tripBreaker(`live fleet drawdown ${ddPct.toFixed(1)}% hit the ${capPct}% cap`)
+}
+
+// ── Profit vault & withdrawals ───────────────────────────────────────────────
+// Profit vault + withdrawals (creditVault / vaultBalance / profitVault /
+// listWithdrawals / requestWithdrawal) moved to ./vault.js — imported &
+// re-exported above. No engine-internal back-deps, so no import cycle.
+
+// USD of live buys that have passed the cap gate this tick but whose swap is still
+// in flight (not yet folded into liveSpend / breaker.spentUsd). Counted inside the
+// gate so concurrent same-tick buys can't all slip through a check-then-act window
+// and overshoot the hard ceiling — tick() fires every bot concurrently and each
+// yields at `await mirrorLive`. Transient (not persisted); released in a finally.
+let reservedLiveUsd = 0
+
+// freshCopySignal / copyRefreshSignal — pure copy-bot signal gates, in
+// ./safety-math.js (re-exported above).
+
+/**
+ * Apply a strategy decision. In paper mode this is a synchronous paper fill. In
+ * LIVE mode the on-chain swap runs FIRST and the paper fill is committed only on
+ * confirmed success — a failed swap pauses the bot and never advances paper
+ * state, so the simulated ledger can't drift away from the wallet's reality.
+ */
+async function settle(bot: Bot, a: Action | null, price: number): Promise<void> {
+  const liveMode = bot.mode === 'live' // each bot executes in its OWN workspace
+  // A bot only touches REAL funds (and the live caps/breaker) when it's on an
+  // on-chain network in live mode. Market/ICP bots stay paper even in live mode, so
+  // they must NOT consume the daily cap / lifetime ceiling or accrue into the
+  // circuit breaker — a purely simulated loss must never pause real bots. [INC-1]
+  const net = networkById(bot.network)
+  const realLive = liveMode && hasLiveExecutor(net)
+  let realQty: number | undefined // the measured on-chain fill (live only), threaded into the commit
+  let realProceedsUsd: number | undefined // measured native/USDT received on a live sell [MP-1]
+  if (a?.type === 'buy' && a.usd > 1 && bot.cashUsd >= a.usd * 0.999) {
+    const usd = Math.min(a.usd, bot.cashUsd) // size the swap to the same amount the paper fill uses
+    if (realLive) {
+      // Circuit breaker: if tripped, do not open new exposure (bots are paused on
+      // trip, but guard here too in case one slips through a tick).
+      if (state.breaker.tripped) {
+        log(bot, `Live buy blocked — circuit breaker tripped (${state.breaker.reason}). Reset the breaker to resume.`, 'warn')
         return
       }
-      const sig =
-        side === 'buy'
-          ? await executeSolanaSwap({
-              inputMint: SOL_MINT,
-              outputMint: tokenAddress,
-              amountBaseUnits: lamportsForUsd(usd, nativePrice!),
-            })
-          : await executeSolanaSwap({
-              inputMint: tokenAddress,
-              // Sells land in the bot's sweep target (USDT or SOL).
-              outputMint: bot.sweepTo === 'usdt' ? net.usdt.address : SOL_MINT,
-              amountBaseUnits: baseUnitsForQty(qty, decimals),
-            })
-      log(bot, `On-chain ${side} confirmed (Jupiter): ${sig.slice(0, 18)}…`, 'info')
-    } else if (net.id === 'icp') {
-      log(bot, 'LIVE EXECUTION PENDING: ICP DEXes (KongSwap/ICPSwap) are canister-only — live executor not yet integrated; this trade stayed paper', 'warn')
-    } else {
-      log(bot, 'Market-scope bots are paper-only — no on-chain execution', 'info')
+      // ── Atomic cap gate ───────────────────────────────────────────────────
+      // The checks AND the reservation below are SYNCHRONOUS (no await between),
+      // and `reservedLiveUsd` accounts for buys already in flight this tick — so
+      // concurrent buys can't all pass the check before any of them increments
+      // the accumulator and overshoot the ceiling.
+      const today = dayKey()
+      const pendingSpent = state.breaker.spentUsd + reservedLiveUsd
+      // Lifetime live-spend ceiling — trip the breaker (pause all) rather than skip.
+      const totalCap = maxLiveUsdTotal()
+      if (totalCap > 0 && pendingSpent + usd > totalCap) {
+        tripBreaker(`a $${usd.toFixed(0)} live buy would exceed the $${totalCap} total live-spend safety limit ($${pendingSpent.toFixed(0)} of $${totalCap} already used). Lower the bot's budget or raise MAX_LIVE_USD_TOTAL`)
+        return
+      }
+      // Daily spend cap: skip (don't pause) so the bot resumes once the day rolls.
+      const spentToday = state.liveSpend.day === today ? state.liveSpend.usd : 0
+      const cap = checkDailyCap({ day: today, usd: spentToday + reservedLiveUsd }, usd, maxLiveUsdPerDay(), today)
+      if (!cap.allowed) {
+        log(bot, `Live buy skipped — ${cap.reason}`, 'warn')
+        return
+      }
+      // Per-token concentration cap (opt-in): don't let the fleet pile too much of the
+      // account into one token. Skip (don't pause) so other tokens keep trading. [P1-5]
+      const concErr = tokenExposureGuard(botTokenKey(bot.network, bot.token, bot.pool?.tokenAddress), bot.token, usd)
+      if (concErr) {
+        log(bot, `Live buy skipped — ${concErr}`, 'warn')
+        return
+      }
+      reservedLiveUsd += usd // reserve BEFORE the first await; released in finally
+      try {
+        const r = await mirrorLive(bot, 'buy', usd, 0, price)
+        if (!r.ok) return haltLive(bot, 'buy', r.error) // on-chain failed → do NOT commit the paper buy
+        if (r.delta && r.delta.baseUnits > 0n) {
+          realQty = Number(r.delta.baseUnits) / 10 ** r.delta.decimals // ACTUAL tokens received
+        } else if (r.delta) {
+          // Swap CONFIRMED but the on-chain delta was unmeasurable (0/ambiguous — e.g.
+          // an external transfer straddled the balance read). Don't under-book to zero:
+          // commit the quote estimate but flag the position untrusted so sells clamp to
+          // the real wallet balance rather than a phantom number.
+          bot.state.realHeldUntrusted = true
+          log(bot, 'Live buy confirmed but on-chain fill unmeasurable — position is an estimate (flagged for reconcile).', 'warn')
+          notifyAsync('ledger-untrusted', `${bot.name}: live buy confirmed but on-chain fill unmeasurable — position flagged for reconcile`)
+        }
+        // Book the REAL native outflow (input + gas) when mirrorLive measured it, else the
+        // intended USD. The cap/breaker then track the wallet, not the cached quote. [P1-2]
+        const spent = r.delta?.nativeSpentUsd ?? usd
+        state.liveSpend = recordDailySpend(state.liveSpend, spent, today) // count the confirmed spend
+        state.breaker.spentUsd += spent
+        tripBreakerIfNeeded()
+        // Persist the spend accounting the INSTANT it's booked (atomic write). The
+        // live-spend cap is safety-critical and — unlike a position, which boot
+        // reconciles from the chain — can't be rebuilt, so it must be durable before
+        // anything else runs. Closes the crash window between booking and the
+        // end-of-settle flush: a SIGKILL after this can never under-count the cap.
+        flushNow()
+      } finally {
+        reservedLiveUsd -= usd // release the reservation whether or not it committed
+      }
     }
-  } catch (e: any) {
-    log(bot, `LIVE EXECUTION FAILED (${side}): ${e.message ?? e}`, 'warn')
+    execBuy(bot, price, usd, a.reason, realQty)
+    if (realLive) flushNow() // persist the real fill immediately
+  } else if (a?.type === 'sell' && bot.position.qty > 0) {
+    const qty = bot.position.qty * Math.min(1, a.fraction)
+    if (realLive) {
+      const r = await mirrorLive(bot, 'sell', qty * price, qty, price, (a.exit ?? false) && a.fraction >= 1)
+      if (!r.ok) return haltLive(bot, 'sell', r.error) // on-chain failed → keep the paper position
+      if (r.delta && r.delta.baseUnits > 0n) {
+        realQty = Number(r.delta.baseUnits) / 10 ** r.delta.decimals // ACTUAL units sold
+        realProceedsUsd = r.delta.proceedsUsd // measured proceeds PAIRED with the measured qty [MP-1]
+      } else if (r.delta) {
+        // Confirmed but the token-delta is unmeasurable (an external transfer straddled the
+        // after-read): book the paper fraction at MODELED proceeds. Pairing measured proceeds
+        // with an unknown sold-qty (→ paper-fraction cost basis) would mis-state P&L. [reconcile]
+        bot.state.realHeldUntrusted = true
+      }
+    }
+    const beforeRealized = bot.stats.realizedUsd
+    execSell(bot, price, a.fraction, a.reason, a.exit ?? false, false, realQty, realProceedsUsd)
+    if (realLive) {
+      accrueLiveRealized(bot, beforeRealized) // single source of breaker accrual
+      flushNow()
+    }
+    // Latch a force-exit if an EXIT only partially filled (live clamp left a residual);
+    // clear it once flat. tickBot re-attempts the remainder every tick. [EXIT-2]
+    if (a.exit ?? false) {
+      if (bot.position.qty > 0) bot.state.forceExit = true
+      else delete bot.state.forceExit
+    }
   }
 }
 
@@ -223,7 +783,11 @@ async function tickBot(bot: Bot) {
     bot.status = newStatus
     log(bot, scheduled ? 'Outside trading window — sleeping' : 'Trading window open — resuming')
   }
-  if (scheduled) return
+  // Outside the window we never OPEN new exposure — but a held position must keep
+  // being MANAGED: stop-loss / take-profit / trailing / max-hold all live inside
+  // decide(). Sleeping here while holding would silently suspend the stop-loss
+  // across the off-window gap. So sleep only when flat. [EXIT-1]
+  if (scheduled && bot.position.qty === 0) return
 
   const strat = strategyById(bot.strategy)
   const params = RISK[bot.risk]
@@ -261,15 +825,15 @@ async function tickBot(bot: Bot) {
     now: Date.now(),
   }
   const a = strat.decide(ctx)
+  // Out-of-window: let exit/sell actions through to protect the position, but never
+  // open new exposure. [EXIT-1]
+  let action = scheduled && a?.type === 'buy' ? null : a
+  // A residual left by a prior clamped live exit must be force-sold every tick
+  // (regardless of strategy signal or window) until the position is flat. [EXIT-2]
+  if (bot.state.forceExit && bot.position.qty > 0)
+    action = { type: 'sell' as const, fraction: 1, reason: 'Force-exit unsold residual', exit: true }
   bot.lastTickAt = Date.now()
-  if (a?.type === 'buy' && a.usd > 1 && bot.cashUsd >= a.usd * 0.999) {
-    execBuy(bot, price, Math.min(a.usd, bot.cashUsd), a.reason)
-    void mirrorLive(bot, 'buy', a.usd, 0, price)
-  } else if (a?.type === 'sell' && bot.position.qty > 0) {
-    const qty = bot.position.qty * Math.min(1, a.fraction)
-    execSell(bot, price, a.fraction, a.reason, a.exit ?? false)
-    void mirrorLive(bot, 'sell', qty * price, qty, price)
-  }
+  await settle(bot, action, price)
 
   // A sniper that has fired and exited is finished — retire it cleanly.
   if (bot.sniper && bot.state.sniped && bot.position.qty === 0) {
@@ -293,11 +857,80 @@ async function tickBot(bot: Bot) {
   }
 }
 
+/**
+ * Reconcile per-bot realHeld against the real wallet — on startup and after a
+ * paper→live transition. The persisted counter can be stale-low (a crash before
+ * flush, or buys made during a paper window) or stale-high (a manual-stop
+ * liquidation that bypassed the in-lane debit), so it is re-derived from chain
+ * rather than trusted. A single-holder bot is re-seeded to the real aggregate
+ * (the whole balance is its own); multi-holder groups can't be split
+ * deterministically, so each is flagged untrusted and its sell clamp degrades to
+ * the wallet-have guard. No-op in paper mode or without live keys.
+ */
+export async function reconcileRealHeld(): Promise<void> {
+  if (!hasLiveBots()) return
+  const groups = new Map<string, { bots: Bot[]; read: () => Promise<bigint> }>()
+  for (const bot of state.bots) {
+    if (bot.status === 'stopped' || bot.cg || bot.mode !== 'live') continue // only LIVE bots hold real on-chain balances
+    const net = networkById(bot.network)
+    if (!net) continue
+    const tokenAddress = bot.pool?.tokenAddress ?? tokenOf(bot.network, bot.token)?.address
+    if (!tokenAddress) continue
+    let key: string
+    let read: () => Promise<bigint>
+    if (net.evm) {
+      if (!live.liveReady()) continue
+      key = `evm:${net.chainId}:${tokenAddress.toLowerCase()}`
+      read = () => live.tokenBalanceBaseUnits(net.chainId, tokenAddress)
+    } else if (net.id === 'solana') {
+      if (!live.solanaLiveReady()) continue
+      key = `solana:${tokenAddress}`
+      read = () => live.splTokenBalanceBaseUnits(tokenAddress)
+    } else {
+      continue
+    }
+    const g = groups.get(key) ?? { bots: [], read }
+    g.bots.push(bot)
+    groups.set(key, g)
+  }
+  let changed = false
+  for (const g of groups.values()) {
+    try {
+      if (g.bots.length === 1) {
+        const have = await g.read()
+        const b = g.bots[0]
+        if (b.state.realHeldUntrusted) changed = true // clearing the flag must persist
+        b.state.realHeldUntrusted = false
+        const next = have.toString()
+        if (b.realHeld !== next) {
+          b.realHeld = next
+          changed = true
+          log(b, `realHeld reconciled from chain: ${next} base units`, 'info')
+        }
+      } else {
+        // Can't split a shared balance deterministically — degrade these bots'
+        // clamp to the wallet-have guard (still no over-send).
+        for (const b of g.bots) {
+          if (!b.state.realHeldUntrusted) changed = true
+          b.state.realHeldUntrusted = true
+        }
+      }
+    } catch {
+      // RPC unavailable — leave realHeld as persisted; the wallet-have clamp
+      // still prevents over-sends until the next reconcile succeeds.
+    }
+  }
+  if (changed) flushNow()
+}
+
 export function serializeBot(bot: Bot) {
   const price = priceForBot(bot) ?? 0
   const unrealizedUsd = bot.position.qty > 0 && price > 0 ? bot.position.qty * (price - bot.position.avgCostUsd) : 0
   return {
     ...bot,
+    // realHeld is the live wallet's REAL on-chain composition — never broadcast
+    // it to every open socket. It stays server-side only.
+    realHeld: undefined,
     priceUsd: price,
     unrealizedUsd: +unrealizedUsd.toFixed(4),
     totalPnlUsd: +(bot.stats.realizedUsd + unrealizedUsd).toFixed(4),
@@ -306,13 +939,17 @@ export function serializeBot(bot: Bot) {
 }
 
 let ticking = false
+let draining = false // set by stopEngine() so no new tick or scan starts during shutdown
+let lastGlobalTickAt = 0 // completion time of the last SUCCESSFUL tick — the dead-man heartbeat [P1-14]
 async function tick() {
-  if (ticking) return // never overlap ticks
+  if (ticking || draining) return // never overlap ticks; never start a new one while draining
   ticking = true
   try {
-    // Static universe + any CoinGecko ids carried by market bots.
+    // Static universe + any CoinGecko ids carried by market bots + the
+    // mainnet majors used to value smart-money wallet holdings.
     const priceIds = new Set(allPriceIds())
     for (const b of state.bots) if (b.cg && b.status !== 'stopped') priceIds.add(b.cg)
+    if (smartMoneyReady()) for (const id of MAINNET_CG_IDS) priceIds.add(id)
     await getSpotPrices([...priceIds])
     // Refresh DEX pool prices for any active sniper bots (deduped by pool).
     const pools = new Map<string, { gt: string; addr: string }>()
@@ -328,14 +965,21 @@ async function tick() {
       state.bots
         .filter((b) => b.copy && (b.status === 'running' || b.status === 'scheduled'))
         .map((b) =>
-          walletTokenSignal(b.network, b.copy!.walletAddress, b.token)
-            .then((sig) => {
-              if (sig) b.state.copySignal = { side: sig.side, txHash: sig.txHash }
+          walletCopySignal(b.network, b.copy!.walletAddress, b.token)
+            .then(({ latest, latestSell }) => {
+              // copyRefreshSignal prioritises a SELL exit (so a holding mirror still exits
+              // after a newer inbound transfer) but ONLY for a sell newer than this bot's
+              // current entry — never resurfacing a pre-re-buy sell. freshCopySignal then
+              // drops any pre-creation signal (SM-1); the originating follow buy is seeded
+              // at creation, which intentionally bypasses that filter.
+              const seed = freshCopySignal(copyRefreshSignal(b, latest, latestSell), b.createdAt)
+              if (seed) b.state.copySignal = seed
             })
             .catch(() => {}),
         ),
     )
     await Promise.all(state.bots.map((b) => tickBot(b).catch((e) => console.error(`[engine] bot ${b.name}:`, e))))
+    checkFleetDrawdown() // opt-in live-fleet trailing-equity drawdown cap (no-op unless MAX_FLEET_DRAWDOWN_PCT set)
     await autoScan().catch((e) => console.error('[engine] auto-sniper scan failed', e))
     await followScan().catch((e) => console.error('[engine] follow scan failed', e))
     resolveTournaments()
@@ -348,11 +992,17 @@ async function tick() {
     broadcast({
       type: 'snapshot', ts: Date.now(), bots: state.bots.map(serializeBot), prices,
       monthly: state.monthly,
-      autoSniper: state.autoSniper ? { ...state.autoSniper, tried: undefined, stats: autoSniperStats() } : null,
+      // The active workspace + live circuit-breaker state, so the web always reflects the
+      // SERVER (meta/init is boot-only and can go stale — e.g. a cached /api/state or a
+      // second tab — leaving the mode toggle/wizard showing the wrong workspace). [realtime]
+      mode: state.settings.mode,
+      breaker: state.breaker,
+      autoSniper: state.autoSniper ? serializeAutoSniper(state.autoSniper) : null,
       tournaments: state.tournaments.map(serializeTournament),
       follows: state.follows.map(serializeFollow),
       smartMoney: { tracking: smartMoneyReady() },
     })
+    lastGlobalTickAt = Date.now() // a full tick completed — heartbeat for /health + the stall watchdog
   } catch (e) {
     console.error('[engine] tick failed', e)
   } finally {
@@ -360,11 +1010,101 @@ async function tick() {
   }
 }
 
+/**
+ * SAFE BOOT: pause every running/scheduled LIVE on-chain bot + stop a live auto-sniper,
+ * so an unattended restart NEVER auto-resumes real on-chain trading. A bot's `mode` is
+ * independent of the viewed workspace (a live bot keeps trading while you view paper), so
+ * this must catch live bots even when `state.settings.mode` is paper — the global-flag
+ * downgrade alone does NOT stop them (the per-bot executor gates on bot.mode). Pausing
+ * preserves positions; the operator re-arms (Live button) + resumes consciously. Returns
+ * the number of bots paused. Call BEFORE startEngine so no live tick can fire first.
+ */
+export function disarmLiveBotsForBoot(): number {
+  let paused = 0
+  for (const b of state.bots) {
+    if (b.mode === 'live' && (b.status === 'running' || b.status === 'scheduled') && hasLiveExecutor(networkById(b.network))) {
+      b.status = 'paused'
+      paused++
+    }
+  }
+  let stoppedAuto = false
+  if (state.autoSniper?.enabled && state.autoSniper.workspace === 'live') {
+    state.autoSniper.enabled = false // a live auto-sniper must not keep opening live snipes on boot
+    stoppedAuto = true
+  }
+  if (paused || stoppedAuto) save()
+  return paused
+}
+
+let engineTimer: ReturnType<typeof setInterval> | null = null
+let watchdogTimer: ReturnType<typeof setInterval> | null = null
+let stallAlerted = false
+
 export function startEngine(b: Broadcast) {
-  broadcast = b
-  void tick()
-  setInterval(tick, TICK_MS)
+  setBroadcast(b)
+  // Re-derive realHeld from the real wallet before the first live tick so a
+  // crash-stale or paper-window ledger can't misclamp the first sells. No-op in
+  // paper mode; never blocks startup on an RPC failure.
+  void reconcileRealHeld()
+    .catch((e) => console.error('[engine] realHeld reconcile failed', e))
+    .finally(() => void tick())
+  engineTimer = setInterval(tick, TICK_MS)
+  // Dead-man watchdog: if the tick loop hasn't completed in ~3 cycles, the engine is
+  // stalled (a wedged lane, a hung await) — stops/exits aren't firing. Alert once, and
+  // again when it recovers. Independent timer so it fires even if tick() itself is stuck. [P1-14]
+  watchdogTimer = setInterval(() => {
+    if (draining || lastGlobalTickAt === 0) return
+    const age = Date.now() - lastGlobalTickAt
+    if (age > TICK_MS * 3) {
+      if (!stallAlerted) {
+        stallAlerted = true
+        console.error(`[engine] ⚠ tick STALLED — no completed tick in ${Math.round(age / 1000)}s`)
+        notifyAsync('tick-stalled', `engine tick has not completed in ${Math.round(age / 1000)}s — stops/exits may not be firing`)
+      }
+    } else if (stallAlerted) {
+      stallAlerted = false
+      notifyAsync('tick-recovered', 'engine tick resumed')
+    }
+  }, TICK_MS)
+  watchdogTimer.unref?.()
   console.log(`[engine] running — ${state.bots.length} bot(s) loaded, tick every ${TICK_MS / 1000}s`)
+}
+
+/** Graceful drain for shutdown: stop scheduling ticks, then await any in-flight swap/
+ *  withdrawal lane so a broadcast on-chain tx finishes (bounded by `timeoutMs`) before the
+ *  process exits — never abandon a confirmed-but-unbooked buy. Safe to call more than once. [P1-12] */
+export async function stopEngine(timeoutMs = 25_000): Promise<void> {
+  draining = true
+  if (engineTimer) { clearInterval(engineTimer); engineTimer = null }
+  if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null }
+  await Promise.race([drainLanes(), new Promise<void>((resolve) => setTimeout(resolve, timeoutMs).unref?.())])
+}
+
+/** Operational snapshot for GET /health — a dead-man check (tick age), live-money state
+ *  (mode, spend vs cap, breaker), bot counts, provider heartbeats and ledger status. [P1-14] */
+export function engineHealth() {
+  const now = Date.now()
+  let running = 0, paused = 0, scheduled = 0, stopped = 0, live = 0
+  for (const b of state.bots) {
+    if (b.status === 'running') running++
+    else if (b.status === 'paused') paused++
+    else if (b.status === 'scheduled') scheduled++
+    else if (b.status === 'stopped') stopped++
+    if (b.mode === 'live' && hasLiveExecutor(networkById(b.network))) live++
+  }
+  const tickAgeMs = lastGlobalTickAt ? now - lastGlobalTickAt : -1
+  const stalled = tickAgeMs < 0 || tickAgeMs > TICK_MS * 3
+  return {
+    status: state.breaker.tripped ? 'breaker-tripped' : stalled ? 'degraded' : 'ok',
+    mode: state.settings.mode,
+    tickAgeMs,
+    lastTickAt: lastGlobalTickAt || null,
+    bots: { total: state.bots.length, running, paused, scheduled, stopped, live },
+    live: { spentTodayUsd: spentTodayUsd(), maxUsdPerDay: maxLiveUsdPerDay(), breaker: state.breaker },
+    providers: providerHealth(now),
+    tradeDbReady: tradeDbReady(),
+    alerting: alertConfigured(),
+  }
 }
 
 // ── Bot lifecycle ────────────────────────────────────────────────────────────
@@ -388,6 +1128,7 @@ export function createBot(input: {
   const net = networkById(isMarket ? 'market' : input.network)
   const token = net && (isMarket ? { symbol: String(input.token || '').toUpperCase() } : tokenOf(input.network, input.token))
   if (!net || !token) return { error: 'unknown network/token' }
+  if (!isMarket && net.tradeable === false) return { error: `${net.name} is holdings-only — trading isn't available there (gas makes the bots uneconomical). It still shows in your wallet view.` }
   if (isMarket && (!token.symbol || !/^[a-z0-9-]{2,80}$/.test(String(input.cg))))
     return { error: 'market bots need a token symbol and a valid CoinGecko id' }
   if (!strategyById(input.strategy)) return { error: 'unknown strategy' }
@@ -396,6 +1137,20 @@ export function createBot(input: {
     return { error: "sweepTo must be 'native' or 'usdt'" }
   const budget = Number(input.budgetUsd)
   if (!Number.isFinite(budget) || budget < 10) return { error: 'budget must be at least $10' }
+  const liveErr = liveCreateError(budget, net)
+  if (liveErr) return { error: liveErr }
+  // Per-token concentration cap (opt-in) for live bots sharing the wallet. [P1-5]
+  if (bornRealLive(net)) {
+    const concErr = tokenExposureGuard(botTokenKey(net.id, token.symbol, (token as { address?: string }).address), token.symbol, budget)
+    if (concErr) return { error: concErr }
+  }
+  // Smart DCA splits the budget into fixed slices; if each would be $1 or less the
+  // engine drops them as dust and the bot ticks forever without ever trading. Reject
+  // upfront with a usable minimum instead of shipping a bot that looks broken.
+  if (input.strategy === 'dca') {
+    const slices = RISK[input.risk]?.dcaSlices ?? 1
+    if (budget / slices <= 1) return { error: `Smart DCA needs a bigger budget — each of its ${slices} slices would be $1 or less (dust). Use at least $${slices + 1}.` }
+  }
   const sched = input.schedule
   if (sched?.enabled) {
     if (!Array.isArray(sched.days) || sched.days.length === 0 || sched.days.some((d) => !Number.isInteger(d) || d < 0 || d > 6))
@@ -421,6 +1176,7 @@ export function createBot(input: {
     followId: input.followId,
     cg: input.cg || undefined,
     sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
+    mode: state.settings.mode, // born into the active workspace; runs there for life
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
     stats: { realizedUsd: 0, feesUsd: 0, wins: 0, losses: 0, nativeTakenQty: 0, nativeTakenUsd: 0 },
@@ -429,7 +1185,7 @@ export function createBot(input: {
     createdAt: Date.now(),
     lastTickAt: 0,
   }
-  log(bot, `Bot launched — $${budget} budget, ${RISK[input.risk].label} risk, ${state.settings.mode} mode`)
+  log(bot, `Bot launched — $${budget} budget, ${RISK[input.risk].label} risk, ${bot.mode} mode`)
   state.bots.push(bot)
   save()
   return bot
@@ -452,19 +1208,71 @@ export async function createSniper(input: {
   sniper: SniperConfig
   auto?: boolean
   sweepTo?: Bot['sweepTo']
+  mode?: 'paper' | 'live' // pin the workspace (the auto-sniper passes its own); default = active
+  liquidityUsd?: number // pool reserve; the auto-sniper passes discovery's value, the manual path fetches it
 }): Promise<(Bot & { riskReport: unknown }) | { error: string; riskReport?: unknown }> {
   const net = networkById(input.network)
   if (!net) return { error: 'unknown network' }
-  if (!/^0x[a-fA-F0-9]{40}$/.test(input.tokenAddress)) return { error: 'invalid token address' }
-  if (!/^0x[a-fA-F0-9]{40}$/.test(input.poolAddress)) return { error: 'invalid pool address' }
+  // Holdings-only chains (e.g. Ethereum mainnet) are never tradeable — block the
+  // snipe at the creation function, not just the UI/discovery layer. [R1 guard]
+  if (net.tradeable === false) return { error: `${net.name} is holdings-only — sniping isn't available there` }
+  if (!EVM_ADDR.test(input.tokenAddress)) return { error: 'invalid token address' }
+  // Pool identifier: 40-hex for Uniswap v2/v3 (and most DEXes) OR 64-hex for a
+  // Uniswap v4 bytes32 pool ID (v4 is a singleton, no per-pool contract). It's
+  // only used for GeckoTerminal pricing — live execution routes by token via 0x —
+  // so both formats are valid; rejecting v4 IDs was blocking real screened pools.
+  if (!/^0x[a-fA-F0-9]{40}$|^0x[a-fA-F0-9]{64}$/.test(input.poolAddress)) return { error: 'invalid pool address' }
   const budget = Number(input.budgetUsd)
   if (!Number.isFinite(budget) || budget < 10) return { error: 'budget must be at least $10' }
   const s = input.sniper
   if (!(s.takeProfitPct > 0) || !(s.stopLossPct > 0) || !(s.maxHoldMin > 0))
     return { error: 'sniper needs positive take-profit, stop-loss and max-hold' }
+  // Pin to the caller's workspace when given (the auto-sniper passes its OWN mode so a
+  // live auto-sniper keeps sniping live even while the paper workspace is being viewed);
+  // default to the active workspace for a manual snipe. realLive gates the live-money
+  // create guard + the daily cap exactly as bornRealLive did, just against the pinned mode.
+  const mode = input.mode ?? state.settings.mode
+  const realLive = mode === 'live' && hasLiveExecutor(net)
+  const liveErr = evaluateLiveCreate(budget, realLive, state.breaker, maxLiveUsdTotal())
+  if (liveErr) return { error: liveErr, riskReport: undefined }
+  // A sniper buys its FULL position in one go, so a budget over the daily cap can never
+  // fill (it'd be skipped every day) — reject upfront rather than ship a stuck bot.
+  if (realLive) {
+    const dailyCap = maxLiveUsdPerDay()
+    if (dailyCap > 0 && budget > dailyCap)
+      return { error: `This sniper's $${budget.toFixed(0)} budget exceeds the $${dailyCap} daily live-spend cap (MAX_LIVE_USD_PER_DAY) — it buys its full position at once, so it could never fill. Lower the budget or raise the daily cap.` }
+    // Per-snipe stake cap + per-token concentration cap (both opt-in). Bound a single
+    // fresh-token bet so one rug can't take the account, and stop the fleet over-
+    // concentrating into one token. [P0-6a, P1-5]
+    const sizeErr = snipeSizeError(budget, maxLiveUsdTotal(), maxSnipeEquityPct())
+    if (sizeErr) return { error: sizeErr }
+    const concErr = tokenExposureGuard(botTokenKey(net.id, input.tokenSymbol, input.tokenAddress), input.tokenSymbol, budget)
+    if (concErr) return { error: concErr }
+  }
 
-  // MANDATORY pre-trade safety screen — blocks honeypots / non-sellable / rugs.
-  const report = await screenAddress(input.network, input.tokenAddress, input.tokenSymbol)
+  // Pool-liquidity floor (every snipe, manual or auto): never enter a pool too thin to
+  // exit, and never size the buy as an outsized fraction of the pool (your own buy would
+  // move the price). The auto-sniper passes discovery's liquidity; the manual path fetches
+  // it. Unknown liquidity → refuse rather than snipe blind. [P2-9]
+  const MIN_POOL_LIQ_USD = 2_000
+  const MAX_BUDGET_FRACTION_OF_POOL = 0.015 // ≤1.5% of the pool reserve
+  const liqUsd = input.liquidityUsd ?? (await poolLiquidityUsd(net.gt, input.poolAddress))
+  if (liqUsd == null) return { error: "couldn't verify this pool's liquidity right now — refusing to snipe blind. Try again shortly." }
+  if (liqUsd < MIN_POOL_LIQ_USD) return { error: `Pool liquidity $${liqUsd.toFixed(0)} is below the $${MIN_POOL_LIQ_USD} floor — too thin to snipe safely (you may not be able to exit).` }
+  if (budget > liqUsd * MAX_BUDGET_FRACTION_OF_POOL)
+    return { error: `$${budget.toFixed(0)} is over ${(MAX_BUDGET_FRACTION_OF_POOL * 100).toFixed(1)}% of the $${liqUsd.toFixed(0)} pool — your own buy would move the price too much. Lower the budget to ≤$${(liqUsd * MAX_BUDGET_FRACTION_OF_POOL).toFixed(0)}.` }
+
+  // Real on-chain token decimals when we can read them (live EVM): a wrong default would
+  // mis-size a partial take-profit (e.g. dump the whole bag on a non-18-decimal token).
+  // Paper / no-signer: keep the caller's value or 18 (cosmetic without real execution). [P2-15]
+  let decimals = input.decimals
+  if (decimals == null && net.evm && live.liveReady()) {
+    try { decimals = (await live.tokenInfo(net.chainId, input.tokenAddress)).decimals } catch { /* fall back below */ }
+  }
+
+  // MANDATORY pre-trade safety screen (STRICT — both providers required, proxy/reclaim
+  // blocking): blocks honeypots / non-sellable / rugs / unverified fresh tokens. [P0-6c/d]
+  const report = await screenAddress(input.network, input.tokenAddress, input.tokenSymbol, true)
   if (!report.tradeable) {
     return {
       error: `Snipe blocked by safety screen (${report.verdict}): ${report.flags.find((f) => f.severity === 'critical')?.label ?? 'unsafe token'}`,
@@ -483,10 +1291,11 @@ export async function createSniper(input: {
     cashUsd: budget,
     status: 'running',
     schedule: { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 },
-    pool: { poolAddress: input.poolAddress, tokenAddress: input.tokenAddress, decimals: input.decimals ?? 18 },
+    pool: { poolAddress: input.poolAddress, tokenAddress: input.tokenAddress, decimals: decimals ?? 18 },
     sniper: s,
     auto: input.auto || undefined,
     sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
+    mode, // pinned workspace (auto-sniper's own, or the active one for a manual snipe)
     riskReport: report,
     position: { qty: 0, avgCostUsd: 0, costUsd: 0, openedAt: null },
     state: {},
@@ -508,6 +1317,15 @@ export async function createSniper(input: {
 // snipes. Profits accumulate in native via the normal sweep.
 
 const AUTO_SCAN_MS = 90_000
+// Default cadence for OPENING a new auto-snipe: one best coin every 2 hours. The
+// scanner still discovers pools every AUTO_SCAN_MS; this throttles actual entries.
+const AUTO_ENTRY_INTERVAL_MS = 2 * 60 * 60_000
+// The autopilot's purpose is to SNIPE — so it only ever enters genuinely new
+// launches, never a coin created months/years ago. Default eligibility window is
+// 3 days; the user can tighten/loosen it per run (clamped 5min … 1yr) but can't
+// turn it off. Enforced via discoverSafePools({ maxAgeMinutes }).
+const AUTO_MAX_AGE_MIN = 72 * 60
+const AUTO_MAX_AGE_CAP_MIN = 365 * 24 * 60
 
 /** Reclaim cash from finished auto-snipes, then (rate-limited) scan + spawn. */
 export async function autoScan(now = Date.now()): Promise<void> {
@@ -526,15 +1344,32 @@ export async function autoScan(now = Date.now()): Promise<void> {
   if (now - a.lastScanAt < AUTO_SCAN_MS) return
   a.lastScanAt = now
 
-  let active = state.bots.filter((b) => b.auto && b.status !== 'stopped').length
+  // Entry cadence: open at most ONE new best snipe per entryIntervalMs (default 2h).
+  // Defensive defaults so an auto-sniper persisted before this field still paces itself.
+  const interval = a.entryIntervalMs && a.entryIntervalMs > 0 ? a.entryIntervalMs : AUTO_ENTRY_INTERVAL_MS
+  if (now - (a.lastEntryAt ?? 0) < interval) return
+
+  const active = state.bots.filter((b) => b.auto && b.status !== 'stopped').length
   if (active >= a.maxConcurrent || a.poolUsd < a.perSnipeUsd) return
 
-  const { pools } = await discoverSafePools(a.network, a.mode, now, { minLiquidityUsd: a.minLiquidityUsd })
+  // Snipe the single BEST untried pool this cycle (discoverSafePools returns them
+  // ranked best-first); fall through to the next-best only if a spawn errors.
+  // Freshness gate: only genuinely NEW launches are eligible — never a months/years-old
+  // coin. autoScan is THE defensive layer for the persisted value, so re-clamp it exactly
+  // like startAutoSniper does — a value absent (legacy auto-sniper), non-finite, or absurdly
+  // large (a hand-edited/corrupt state.json) can never widen or disable the window.
+  const rawMaxAge = Number(a.maxAgeMinutes)
+  const maxAgeMinutes = rawMaxAge > 0 ? Math.min(rawMaxAge, AUTO_MAX_AGE_CAP_MIN) : AUTO_MAX_AGE_MIN
+  // The autopilot ALWAYS snipes the fresh-launch feed: 'trending' surfaces ESTABLISHED
+  // coins (often months/years old) that the freshness gate then excludes, so a 'trending'
+  // auto-sniper finds nothing. Migrate any legacy 'trending' campaign to 'new' in-place.
+  if (a.mode !== 'new') a.mode = 'new'
+  const { pools } = await discoverSafePools(a.network, a.mode, now, { minLiquidityUsd: a.minLiquidityUsd, maxAgeMinutes })
   for (const p of pools) {
-    if (active >= a.maxConcurrent || a.poolUsd < a.perSnipeUsd) break
     const key = p.tokenAddress.toLowerCase()
     if (a.tried.includes(key)) continue
     a.tried.push(key)
+    a.vetted = (a.vetted ?? 0) + 1 // per-campaign vetted count (distinct new candidates considered)
     if (a.tried.length > 500) a.tried.splice(0, a.tried.length - 500)
     const out = await createSniper({
       network: a.network,
@@ -546,10 +1381,18 @@ export async function autoScan(now = Date.now()): Promise<void> {
       sniper: a.config,
       auto: true,
       sweepTo: a.sweepTo,
+      mode: a.workspace ?? state.settings.mode, // pinned workspace (live keeps sniping live)
+      liquidityUsd: p.liquidityUsd ?? undefined, // discovery already read it — skip the re-fetch [P2-9]
     })
     if (!('error' in out)) {
       a.poolUsd -= a.perSnipeUsd
-      active++
+      a.lastEntryAt = now // one best coin per cadence
+      a.openedCount = (a.openedCount ?? 0) + 1
+      // Campaign fully deployed → the SCAN is done. Stop scanning (the budget is all
+      // committed); the open runners keep riding to their own exits as normal bots.
+      const target = a.targetSnipes && a.targetSnipes > 0 ? a.targetSnipes : Math.max(1, Math.floor(a.totalBudgetUsd / a.perSnipeUsd))
+      if (a.openedCount >= target) a.enabled = false
+      break
     }
   }
   save()
@@ -564,9 +1407,15 @@ export function startAutoSniper(input: {
   config: SniperConfig
   minLiquidityUsd?: number
   sweepTo?: Bot['sweepTo']
+  entryIntervalMs?: number
+  maxAgeMinutes?: number
 }): { error: string } | State['autoSniper'] {
   if (state.autoSniper?.enabled) return { error: 'Auto-Sniper is already running — stop it first' }
-  if (!networkById(input.network)) return { error: 'unknown network' }
+  const asNet = networkById(input.network)
+  if (!asNet) return { error: 'unknown network' }
+  // Holdings-only chains can never snipe — reject up front rather than start a
+  // scanner that would find nothing forever. [R1 guard]
+  if (asNet.tradeable === false) return { error: `${asNet.name} is holdings-only — the auto-sniper can't run there` }
   const total = Number(input.totalBudgetUsd)
   const per = Number(input.perSnipeUsd)
   if (!Number.isFinite(total) || total < 10) return { error: 'budget must be at least $10' }
@@ -578,17 +1427,30 @@ export function startAutoSniper(input: {
   state.autoSniper = {
     enabled: true,
     network: input.network,
-    mode: input.mode === 'trending' ? 'trending' : 'new',
+    mode: 'new', // always the fresh-launch feed — that's what "sniping" means (trending = old coins)
     totalBudgetUsd: total,
     poolUsd: total,
     perSnipeUsd: per,
     maxConcurrent,
     config: c,
     sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
-    minLiquidityUsd: Math.max(0, Number(input.minLiquidityUsd) || 10_000),
+    // Fresh launches start small — a high floor structurally starves the sniper. Safety
+    // is the honeypot/rug/holder SCREEN, not the liquidity floor, so keep this modest.
+    minLiquidityUsd: Math.max(0, Number(input.minLiquidityUsd) || 5_000),
     tried: state.autoSniper?.tried ?? [],
     startedAt: Date.now(),
     lastScanAt: 0,
+    entryIntervalMs: Number(input.entryIntervalMs) > 0 ? Number(input.entryIntervalMs) : AUTO_ENTRY_INTERVAL_MS,
+    lastEntryAt: 0, // first cycle opens immediately, then paces every entryIntervalMs
+    // Only snipe coins this new (default 3 days). Clamped to a sane band so a bad
+    // value can't disable the gate — sniping established coins defeats the purpose.
+    maxAgeMinutes:
+      Number(input.maxAgeMinutes) > 0 ? Math.min(Number(input.maxAgeMinutes), AUTO_MAX_AGE_CAP_MIN) : AUTO_MAX_AGE_MIN,
+    // Campaign size: deploy the whole budget across this many snipes, then the scan ends.
+    targetSnipes: Math.max(1, Math.floor(total / per)),
+    openedCount: 0,
+    vetted: 0, // per-campaign "coins vetted" counter (tried[] is the lifetime dedup memory)
+    workspace: state.settings.mode, // pin the workspace it was started in (live keeps sniping live)
   }
   save()
   return state.autoSniper
@@ -600,24 +1462,67 @@ export function stopAutoSniper(liquidate: boolean): State['autoSniper'] {
   a.enabled = false
   if (liquidate) {
     for (const b of state.bots) {
-      if (b.auto && b.status !== 'stopped') controlBot(b.id, 'stop')
+      if (b.auto && b.status !== 'stopped') void controlBot(b.id, 'stop')
     }
   }
   save()
   return a
 }
 
-/** Aggregate live stats for the autopilot's bots (active + retired). */
+/** Aggregate live stats for the CURRENT campaign's auto-snipes (active + retired).
+ *  Scoped to bots opened at/after the campaign's `startedAt` so the panel matches its own
+ *  "snipe X of Y" framing — lifetime performance lives in the bot list + Monthly P&L. P&L
+ *  is mark-to-market (realized + unrealized on open runners), matching the single-bot view.
+ *  `nativeTakenUsd` is value swept to the native vault (principal+profit on a manual stop),
+ *  surfaced to the UI as "Banked to vault" (NOT "profit") so it can't read as a fake gain. */
 export function autoSniperStats() {
-  const bots = state.bots.filter((b) => b.auto)
-  return {
-    active: bots.filter((b) => b.status !== 'stopped').length,
-    completed: bots.filter((b) => b.status === 'stopped').length,
-    realizedUsd: +bots.reduce((s, b) => s + b.stats.realizedUsd, 0).toFixed(2),
-    nativeTakenUsd: +bots.reduce((s, b) => s + b.stats.nativeTakenUsd, 0).toFixed(2),
-    wins: bots.reduce((s, b) => s + b.stats.wins, 0),
-    losses: bots.reduce((s, b) => s + b.stats.losses, 0),
+  const since = state.autoSniper?.startedAt ?? 0
+  const bots = state.bots.filter((b) => b.auto && b.createdAt >= since)
+  let realized = 0
+  let unreal = 0
+  let banked = 0
+  let wins = 0
+  let losses = 0
+  let active = 0
+  let completed = 0
+  for (const b of bots) {
+    realized += b.stats.realizedUsd
+    banked += b.stats.nativeTakenUsd
+    if (b.status === 'stopped') {
+      completed++
+      // Win/loss is per ROUND-TRIP (one closed snipe) by its NET realized P&L — NOT per sell.
+      // A snipe that de-risks (a winning partial) then exits at a net loss is ONE loss, not
+      // 1W+1L. This keeps wins + losses === completed and the win% honest with de-risk on.
+      if (b.stats.realizedUsd >= 0) wins++
+      else losses++
+      continue
+    }
+    active++
+    const price = priceForBot(b) ?? 0
+    if (b.position.qty > 0 && price > 0) unreal += b.position.qty * (price - b.position.avgCostUsd)
   }
+  return {
+    active,
+    completed,
+    realizedUsd: +realized.toFixed(2),
+    unrealizedUsd: +unreal.toFixed(2),
+    totalPnlUsd: +(realized + unreal).toFixed(2),
+    nativeTakenUsd: +banked.toFixed(2),
+    wins,
+    losses,
+  }
+}
+
+/**
+ * The Auto-Sniper as sent to clients. Drops the bulky `tried` address array (sends
+ * only its count — "coins vetted") and folds in the live aggregate stats + the scan
+ * cadence so the UI can render an honest scanning/countdown view. Used by /api/state,
+ * the WS snapshot, and the start/stop responses so the shape never drifts.
+ */
+export function serializeAutoSniper(a: NonNullable<State['autoSniper']>) {
+  // "Coins vetted" = candidates considered THIS campaign (a.vetted); fall back to the
+  // lifetime tried buffer for an auto-sniper persisted before the per-campaign counter.
+  return { ...a, tried: undefined, triedCount: a.vetted ?? a.tried.length, scanIntervalMs: AUTO_SCAN_MS, stats: autoSniperStats() }
 }
 
 // ── Auto-Follow: mirror EVERY curated-token buy a smart-money wallet makes ──
@@ -662,6 +1567,7 @@ export async function followScan(now = Date.now()): Promise<void> {
         walletLabel: f.label,
         sweepTo: f.sweepTo,
         followId: f.id,
+        seedBuyTx: e.txHash, // enter the very buy that triggered the spawn [follow-entry]
       })
       if (!('error' in out)) {
         f.poolUsd -= f.perTradeUsd
@@ -681,7 +1587,7 @@ export function startFollow(input: {
   risk?: Follow['risk']
   sweepTo?: Bot['sweepTo']
 }): Follow | { error: string } {
-  if (!/^0x[a-fA-F0-9]{40}$/.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
+  if (!EVM_ADDR.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
   const a = input.walletAddress.toLowerCase()
   if (state.follows.some((f) => f.walletAddress.toLowerCase() === a && f.enabled))
     return { error: 'already following this wallet — stop the existing follow first' }
@@ -716,7 +1622,7 @@ export function stopFollow(id: string, liquidate: boolean): Follow | { error: st
   f.enabled = false
   if (liquidate) {
     for (const b of state.bots) {
-      if (b.followId === id && b.status !== 'stopped') controlBot(b.id, 'stop')
+      if (b.followId === id && b.status !== 'stopped') void controlBot(b.id, 'stop')
     }
   }
   save()
@@ -757,8 +1663,9 @@ export function createCopyBot(input: {
   walletLabel: string
   sweepTo?: Bot['sweepTo']
   followId?: string
+  seedBuyTx?: string // the wallet BUY that triggered an auto-follow spawn — enter it directly
 }): Bot | { error: string } {
-  if (!/^0x[a-fA-F0-9]{40}$/.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
+  if (!EVM_ADDR.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
   if (!networkById(input.network)?.evm) return { error: 'copy trading needs an EVM network (wallet tracking is Etherscan-based)' }
   const out = createBot({
     network: input.network, token: input.token, strategy: 'copytrade', risk: input.risk, budgetUsd: input.budgetUsd,
@@ -767,6 +1674,11 @@ export function createCopyBot(input: {
     sweepTo: input.sweepTo,
     followId: input.followId,
   })
+  // Auto-follow spawns a mirror the instant it sees the wallet's BUY, so that buy's
+  // on-chain ts predates createdAt and the tick's freshCopySignal filter would reject
+  // it — the bot would never enter (and, never trading, never retire → leaks the follow
+  // pool budget forever). Seed the triggering buy directly so the first tick enters. [follow-entry]
+  if (!('error' in out) && input.seedBuyTx) out.state.copySignal = { side: 'buy', txHash: input.seedBuyTx }
   return out
 }
 
@@ -820,9 +1732,9 @@ function resolveTournaments() {
       const ranked = serializeTournament(t).standings
       t.winnerBotId = ranked[0]?.botId ?? null
       t.status = 'ended'
-      // Freeze every contestant: liquidate to native and stop.
+      // Freeze every contestant: liquidate to native and stop (mirror-first in live).
       for (const b of state.bots.filter((x) => x.tournamentId === t.id && x.status !== 'stopped')) {
-        controlBot(b.id, 'stop')
+        void controlBot(b.id, 'stop')
       }
     }
   }
@@ -839,6 +1751,9 @@ export function startTournament(input: {
 }): (Tournament & { standings: unknown }) | { error: string } {
   const net = networkById(input.network)
   if (!net || !tokenOf(input.network, input.token)) return { error: 'unknown network/token' }
+  // Reject holdings-only chains up front so we never push an orphan tournament record
+  // whose contestant createBot()s all fail the tradeable guard. [R1 guard]
+  if (net.tradeable === false) return { error: `${net.name} is holdings-only — tournaments aren't available there` }
   const budget = Number(input.budgetUsd)
   if (!Number.isFinite(budget) || budget < 10) return { error: 'budget per contestant must be at least $10' }
   const contestants = (input.contestants ?? []).filter((c) => strategyById(c.strategy) && RISK[c.risk])
@@ -852,6 +1767,7 @@ export function startTournament(input: {
     token: input.token,
     budgetUsd: budget,
     status: 'running',
+    mode: state.settings.mode, // the workspace it runs in (its contestant bots inherit it)
     createdAt: Date.now(),
     endsAt: input.durationHours && input.durationHours > 0 ? Date.now() + input.durationHours * 3_600_000 : null,
     sweepTo: input.sweepTo === 'usdt' ? 'usdt' : 'native',
@@ -876,7 +1792,7 @@ export function endTournament(id: string): (Tournament & { standings: unknown })
   if (t.status === 'running') {
     t.winnerBotId = serializeTournament(t).standings[0]?.botId ?? null
     t.status = 'ended'
-    for (const b of state.bots.filter((x) => x.tournamentId === t.id && x.status !== 'stopped')) controlBot(b.id, 'stop')
+    for (const b of state.bots.filter((x) => x.tournamentId === t.id && x.status !== 'stopped')) void controlBot(b.id, 'stop')
   }
   save()
   return serializeTournament(t)
@@ -891,7 +1807,7 @@ export function deleteTournament(id: string): boolean {
   return true
 }
 
-export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot | { error: string } {
+export async function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Promise<Bot | { error: string }> {
   const bot = state.bots.find((b) => b.id === id)
   if (!bot) return { error: 'not found' }
   if (action === 'pause') {
@@ -899,14 +1815,59 @@ export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot
     log(bot, 'Paused by user')
   } else if (action === 'resume') {
     bot.status = 'running'
-    log(bot, 'Resumed by user')
+    bot.archived = false // resuming brings it back to the active list
+    // Re-arm a RETIRED sniper. A sniper is one-shot (state.sniped) — so without
+    // clearing the flag a resume just re-trips the "snipe complete" retire on the
+    // next tick (the loop the user saw). A flat, already-fired sniper instead
+    // re-snipes a fresh full-position entry at the current price with its (possibly
+    // just-edited) parameters. A sniper still HOLDING a position is left untouched —
+    // resume simply continues managing the open trade. [re-snipe]
+    if (bot.sniper && bot.state.sniped && bot.position.qty === 0) {
+      bot.state.sniped = false
+      delete bot.state.entryAt
+      delete bot.state.peak
+      bot.state.forceExit = false
+      if (bot.cashUsd > 1)
+        log(bot, `Re-armed — sniping again with TP +${bot.sniper.takeProfitPct}% / SL −${bot.sniper.stopLossPct}% / max ${bot.sniper.maxHoldMin}m${bot.sniper.trailingPct ? ` / trail ${bot.sniper.trailingPct}%` : ''}`)
+      else log(bot, 'Resumed, but working cash is ~$0 — add budget to re-snipe', 'warn')
+    } else {
+      log(bot, 'Resumed by user')
+    }
   } else {
-    // Stop = liquidate everything to the chain's native coin. No bags.
+    // Stop = liquidate everything to the bot's sweep target. MIRROR-FIRST in live
+    // mode (like settle): the on-chain sell must CONFIRM before we book the paper
+    // liquidation — otherwise a failed sell (no liquidity / honeypot / RPC down)
+    // would record a phantom sold-and-swept position with fake P&L while the real
+    // tokens are stranded. On failure: pause (NO paper mutation) so the operator
+    // can retry; do NOT mark the bot stopped.
+    const liveMode = bot.mode === 'live' // stop liquidates on-chain only for a LIVE bot
     const price = priceForBot(bot)
     if (bot.position.qty > 0 && price) {
       const qty = bot.position.qty
-      execSell(bot, price, 1, 'Manual stop — full position swept to native', true, true)
-      void mirrorLive(bot, 'sell', qty * price, qty, price)
+      let realQty: number | undefined
+      let realProceeds: number | undefined // measured native/USDT received [MP-1]
+      if (liveMode) {
+        const r = await mirrorLive(bot, 'sell', qty * price, qty, price, true) // manual stop = full exit [MP-2]
+        if (!r.ok) {
+          bot.status = 'paused'
+          log(bot, `Stop aborted — on-chain sell failed (${r.error}). Position kept untouched; resume to retry.`, 'warn')
+          flushNow()
+          return bot
+        }
+        if (r.delta && r.delta.baseUnits > 0n) {
+          realQty = Number(r.delta.baseUnits) / 10 ** r.delta.decimals
+          realProceeds = r.delta.proceedsUsd // measured proceeds paired with measured qty
+        } else if (r.delta) {
+          bot.state.realHeldUntrusted = true // unmeasurable delta → modeled proceeds for the paper fraction [reconcile]
+        }
+      }
+      const beforeRealized = bot.stats.realizedUsd
+      execSell(bot, price, 1, 'Manual stop — full position swept to native', true, true, realQty, realProceeds)
+      // A live stop realizes real on-chain P&L — fold it into the breaker exactly like
+      // settle(), so a forced/auto liquidation (manual Stop, tournament end, auto-sniper
+      // / follow teardown) can't slip a loss past the cumulative-loss ceiling.
+      const net = networkById(bot.network)
+      if (liveMode && hasLiveExecutor(net)) accrueLiveRealized(bot, beforeRealized)
     } else if (bot.position.qty > 0) {
       log(bot, 'Stop requested but no live price — position NOT liquidated; resume and retry', 'warn')
       return bot
@@ -914,6 +1875,88 @@ export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot
     bot.status = 'stopped'
     log(bot, 'Stopped — all holdings in native currency')
   }
+  flushNow() // durable: a stop + shutdown within the debounce window must not resurrect the bot
+  return bot
+}
+
+/**
+ * Adjust an existing bot's editable parameters. Currently the sniper's exit
+ * thresholds (take-profit / stop-loss / max-hold / trailing) and the budget — a
+ * top-up injects working cash; reducing pulls back only FREE cash (never below
+ * what's deployed). The sniper strategy re-reads `bot.sniper` every tick, so
+ * changes apply live to a running bot AND govern the next entry of a re-armed one.
+ * Validates each field; an out-of-range value is rejected WITHOUT partially
+ * applying. Pair with controlBot('resume') to re-snipe a retired bot with the new
+ * parameters. Returns the updated bot or {error}.
+ */
+export function editBot(
+  id: string,
+  patch: { takeProfitPct?: number; stopLossPct?: number; maxHoldMin?: number; trailingPct?: number | null; budgetUsd?: number },
+): Bot | { error: string } {
+  const bot = state.bots.find((b) => b.id === id)
+  if (!bot) return { error: 'not found' }
+
+  // ── Sniper exit thresholds (validated into a copy, applied atomically) ──────
+  const touchesSnipe =
+    patch.takeProfitPct !== undefined || patch.stopLossPct !== undefined || patch.maxHoldMin !== undefined || patch.trailingPct !== undefined
+  if (touchesSnipe) {
+    if (!bot.sniper) return { error: 'take-profit / stop-loss / max-hold are sniper-only parameters' }
+    const next: SniperConfig = { ...bot.sniper }
+    if (patch.takeProfitPct !== undefined) {
+      const v = Number(patch.takeProfitPct)
+      if (!(v > 0) || v > 1000) return { error: 'take-profit must be between 0 and 1000%' }
+      next.takeProfitPct = v
+    }
+    if (patch.stopLossPct !== undefined) {
+      const v = Number(patch.stopLossPct)
+      if (!(v > 0) || v > 100) return { error: 'stop-loss must be between 0 and 100%' }
+      next.stopLossPct = v
+    }
+    if (patch.maxHoldMin !== undefined) {
+      const v = Number(patch.maxHoldMin)
+      if (!(v > 0) || v > 100_000) return { error: 'max-hold must be a positive number of minutes' }
+      next.maxHoldMin = v
+    }
+    if (patch.trailingPct !== undefined) {
+      if (patch.trailingPct === null || patch.trailingPct === 0) delete next.trailingPct // clear the optional trailing stop
+      else {
+        const v = Number(patch.trailingPct)
+        if (!(v > 0) || v > 100) return { error: 'trailing stop must be between 0 and 100%' }
+        next.trailingPct = v
+      }
+    }
+    bot.sniper = next
+  }
+
+  // ── Budget (top-up adds working cash; reduce pulls back only free cash) ─────
+  if (patch.budgetUsd !== undefined) {
+    const v = Number(patch.budgetUsd)
+    if (!Number.isFinite(v) || v < 10) return { error: 'budget must be at least $10' }
+    const delta = v - bot.budgetUsd
+    if (delta < 0 && bot.cashUsd + delta < 0) return { error: `can't reduce below deployed capital — only $${bot.cashUsd.toFixed(2)} is free` }
+    bot.budgetUsd = v
+    bot.cashUsd = Math.max(0, bot.cashUsd + delta) // capital injection / withdrawal of free cash
+  }
+
+  log(
+    bot,
+    `Parameters updated${bot.sniper ? ` — TP +${bot.sniper.takeProfitPct}% / SL −${bot.sniper.stopLossPct}% / max ${bot.sniper.maxHoldMin}m${bot.sniper.trailingPct ? ` / trail ${bot.sniper.trailingPct}%` : ''}` : ''} · budget $${bot.budgetUsd}`,
+  )
+  flushNow()
+  return bot
+}
+
+/** Manually archive (hide from the active list) or un-archive a bot. Archiving a
+ *  RUNNING/scheduled bot also pauses it so an archived bot is never quietly trading;
+ *  the position (if any) is kept — un-archive then resume to manage it again. */
+export function archiveBot(id: string, archived: boolean): Bot | { error: string } {
+  const bot = state.bots.find((b) => b.id === id)
+  if (!bot) return { error: 'not found' }
+  bot.archived = archived
+  if (archived && (bot.status === 'running' || bot.status === 'scheduled')) {
+    bot.status = 'paused'
+    log(bot, 'Archived (paused) by user')
+  } else log(bot, archived ? 'Archived by user' : 'Un-archived by user')
   save()
   return bot
 }
@@ -921,9 +1964,16 @@ export function controlBot(id: string, action: 'pause' | 'resume' | 'stop'): Bot
 export function deleteBot(id: string): boolean {
   const i = state.bots.findIndex((b) => b.id === id)
   if (i === -1) return false
+  const bot = state.bots[i]
+  // A live bot with residual on-chain holdings leaves orphaned tokens in the
+  // shared wallet — surface it loudly rather than silently breaking the
+  // realHeld-sums-to-aggregate invariant.
+  if (bot.mode === 'live' && curHeld(bot) > 0n)
+    console.warn(`[engine] deleting bot ${bot.id} (${bot.name}) with realHeld=${bot.realHeld} — ${curHeld(bot)} base units orphaned in the shared wallet; reconcile/sweep manually`)
   state.bots.splice(i, 1)
   state.trades = state.trades.filter((t) => t.botId !== id)
-  save() // monthly ledger intentionally keeps the deleted bot's history
+  fleetPeak = 0 // removing a bot shrinks fleet equity — re-baseline the drawdown high-water so a deletion can't spuriously trip the cap
+  flushNow() // monthly ledger intentionally keeps the deleted bot's history
   return true
 }
 
@@ -931,5 +1981,6 @@ export function trimTrades() {
   if (state.trades.length > 2000) state.trades.splice(0, state.trades.length - 2000)
 }
 
-/** Internal hooks for the test suite only. */
-export const __test = { execBuy, execSell, tickBot }
+/** Internal hooks for the test suite only. `live` is the injectable executor
+ *  seam — tests override its methods to exercise live reconciliation offline. */
+export const __test = { execBuy, execSell, tickBot, settle, mirrorLive, live, runExclusive, reconcileRealHeld, curHeld, checkFleetDrawdown, creditVault, vaultBalance }
