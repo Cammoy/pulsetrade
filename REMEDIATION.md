@@ -40,9 +40,12 @@ control-plane writes), ✅ P2-5 (candle-free protective SL/TP), ✅ P2-8 (DCA 50
 + tighter capitulation), ✅ P2-9 (manual-snipe pool-liquidity floor + budget-vs-liquidity cap),
 ✅ P2-10 (daily-cap fail-closed at arm), ✅ P2-12 (boot rejects malformed cap envs), ✅ P2-14
 (autopilot Stop/Delete race + delete budget reclaim), ✅ P2-15 (strict-win counting + on-chain
-sniper decimals when live). P2-7 approve-gas leg landed with P0-9 (min-economic-trade guard open).
-Still open: P2-1 MEV, P2-2 CORS server-side reject, P2-6 closed-bar eval, P2-11 fail-fast-if-RPC-
-unset, P2-13 nvm `.nvmrc`/exit, P2-7 min-economic-trade guard.
+sniper decimals when live), ✅ P2-2 (cross-origin mutations rejected server-side), ✅ P2-13
+(launcher reads `.nvmrc` + exits non-zero on no modern Node; `tradeDbReady` already on /health).
+P2-7 approve-gas leg landed with P0-9 (min-economic-trade guard open).
+Still open: P2-1 (MEV/private-RPC — needs real endpoints), P2-6 (closed-bar eval — behavior
+change), P2-11 (fail-fast if dedicated RPC unset — debatable; public RPCs work), P2-7
+(min-economic-trade guard — low value on cheap L2s).
 
 ---
 
@@ -144,8 +147,24 @@ validation + `invalidCapEnv`), plus the dust-win behaviour exercised via the eng
   just-armed live position survives a crash in the debounce window.
 Tests: `p2-tail.test.ts` (fallback SL/TP, DCA filter, delete reclaim).
 
-### Remaining (smaller / lower-priority)
-P2-1 MEV protection (private/Jito RPC — needs real endpoints), P2-2 CORS server-side reject,
-P2-6 closed-bar evaluation, P2-11/P2-13 RPC/nvm fail-fast, P2-7 min-economic-trade guard.
-Partials P1-7 (pending-buy journal), P1-9 (stale→exit + tight sniper poll), P1-15 (allowance
+## Session 7 — P2 tail: CSRF + launcher ✅ DONE
+491 server tests pass (+2), tsc clean.
+- **P2-2** `app.ts` rejects cross-origin MUTATIONS server-side (403) — cors() only omits
+  headers, so a malicious page's no-cors POST still ran; now blocked before any handler.
+  Origin-less callers pass (no browser CSRF surface; the token gates them).
+- **P2-13** `launch.mjs` prefers the `.nvmrc`-pinned Node and EXITS NON-ZERO when no Node
+  >=22.5 is found (override `PULSETRADE_ALLOW_LEGACY_NODE=1`) instead of silently disabling
+  the durable ledger. (`tradeDbReady` is already surfaced on `/health` via engineHealth.)
+Tests: `http.test.ts` (cross-origin 403, same-origin/origin-less pass).
+
+### Remaining (deliberate calls — not done)
+- **P2-1** MEV/private-RPC + Jito: needs real protected endpoints; can't implement/test
+  without infra. Operational config, not a code change.
+- **P2-6** closed-bar evaluation: changes live trade cadence broadly; behavior-risky, would
+  churn many tests — do deliberately if desired.
+- **P2-11** fail-fast if dedicated RPC unset when live: debatable (public RPCs work, just
+  rate-limited) — left as a non-blocking gap rather than forcing paid RPC.
+- **P2-7** min-economic-trade guard: low value on cheap L2s (gas is cents; the $10 budget
+  floor already covers it) — skipped to avoid false rejections.
+Partials: P1-7 (pending-buy journal), P1-9 (stale→exit + tight sniper poll), P1-15 (allowance
 read). Plus the minor notes on P0-4/P0-5/P0-8 in the P0 list above.

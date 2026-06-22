@@ -92,6 +92,18 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
       origin: [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
     }),
   )
+  // cors() only OMITS response headers for a disallowed origin — the request still reaches
+  // Express and executes. So reject cross-origin MUTATIONS server-side: a malicious page's
+  // no-cors POST carries its Origin, and we 403 it before any handler runs. Defense-in-depth
+  // beside ENGINE_TOKEN, and the only gate in token-less local-dev mode. Origin-less callers
+  // (curl/server-to-server) have no browser CSRF surface and pass (the token still gates them). [P2-2]
+  app.use((req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next()
+    const origin = req.get('origin')
+    if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin))
+      return res.status(403).json({ error: 'cross-origin request blocked' })
+    next()
+  })
   app.use(express.json({ limit: '256kb' }))
 
   // ── Auth ───────────────────────────────────────────────────────────────────

@@ -142,6 +142,29 @@ test('a malformed JSON body is reported as a 400 client error (not a 500 server 
   assert.deepEqual(await r.json(), { error: 'bad request' })
 })
 
+// ── P2-2: cross-origin mutation rejected server-side (CSRF defense) ───────────
+
+test('P2-2: a cross-origin mutation is rejected 403 (even with no engine token)', async () => {
+  const r = await fetch(open + '/api/mode', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+    body: JSON.stringify({ mode: 'paper' }),
+  })
+  assert.equal(r.status, 403)
+  assert.deepEqual(await r.json(), { error: 'cross-origin request blocked' })
+})
+
+test('P2-2: a same-origin mutation and an origin-less caller still pass', async () => {
+  const same = await fetch(open + '/api/mode', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost:5173' },
+    body: JSON.stringify({ mode: 'paper' }),
+  })
+  assert.equal(same.status, 200, 'same-machine browser origin allowed')
+  const curl = await fetch(open + '/api/mode', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'paper' }) })
+  assert.equal(curl.status, 200, 'origin-less (curl/server) allowed — token gates it when set')
+})
+
 // ── P2-3: route-param validation (block injection into outbound URLs) ─────────
 
 test('P2-3: route params interpolated into upstream URLs are validated (bad → 400, no upstream call)', async () => {
