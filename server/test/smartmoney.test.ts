@@ -111,7 +111,7 @@ test('smartMoneyConsensus: ranks tokens by distinct buyers, net inflow first', (
     // CCC: one wallet buying (weaker than AAA's two buyers)
     ev('0xC', 'CCC', '0xccc', 'buy', 2000, 2),
   ]
-  const rows = smartMoneyConsensus(events as never)
+  const rows = smartMoneyConsensus(events as never, 5) // now=5 so the tiny synthetic ts aren't "stale"
   assert.equal(rows[0].token, 'AAA', 'two distinct buyers ranks first')
   assert.equal(rows[0].buyers, 2)
   assert.equal(rows[0].netUsd, 1500)
@@ -119,9 +119,24 @@ test('smartMoneyConsensus: ranks tokens by distinct buyers, net inflow first', (
   assert.equal(rows[rows.length - 1].token, 'BBB')
   assert.equal(rows.find((r) => r.token === 'BBB')!.sellers, 1)
   // same wallet buying twice counts as ONE distinct buyer
-  const dup = smartMoneyConsensus([ev('0xA', 'D', '0xd', 'buy', 1, 1), ev('0xA', 'D', '0xd', 'buy', 1, 2)] as never)
+  const dup = smartMoneyConsensus([ev('0xA', 'D', '0xd', 'buy', 1, 1), ev('0xA', 'D', '0xd', 'buy', 1, 2)] as never, 2)
   assert.equal(dup[0].buyers, 1)
   assert.equal(dup[0].buys, 2)
+})
+
+test('smartMoneyConsensus: EXCLUDES majors/wrapped/stables (WETH, USDC) and stale activity [accum-filter/stale-filter]', () => {
+  const NOW = 1_800_000_000_000
+  const ev = (token: string, ts: number) =>
+    ({ wallet: '0xA', label: 'A', network: 'ethereum', token, tokenAddress: '0x' + token, side: 'buy' as const, qty: 1, usd: 1000, ts, txHash: `${token}${ts}` })
+  const rows = smartMoneyConsensus(
+    [ev('AERO', NOW), ev('WETH', NOW), ev('USDC', NOW), ev('OLDCOIN', NOW - 200 * 86_400_000)] as never,
+    NOW,
+  )
+  const tokens = rows.map((r) => r.token)
+  assert.ok(tokens.includes('AERO'), 'a real alt is a signal')
+  assert.ok(!tokens.includes('WETH'), 'WETH is not an accumulation signal')
+  assert.ok(!tokens.includes('USDC'), 'parking in a stable is not a signal')
+  assert.ok(!tokens.includes('OLDCOIN'), 'activity older than the staleness window is dropped')
 })
 
 // ── comprehensive holdings (all tokens) ──────────────────────────────────────
@@ -168,25 +183,30 @@ test('computeHoldings: nets buys minus sells per token, drops flat positions, pr
 
 const { consensusHoldings } = await import('../src/smartmoney.js')
 
-test('consensusHoldings: surfaces tokens 2+ whales hold, drops single-holder + spam', () => {
-  const hold = (token: string, addr: string, usd: number | null, suspicious = false) =>
-    ({ network: 'ethereum', token, tokenAddress: addr, qty: 1, usd, curated: false, buys: 1, sells: 0, lastTs: 1, suspicious })
-  const ch = consensusHoldings([
-    { label: 'GCR', holdings: [hold('WETH', '0xweth', 100000), hold('PEPE', '0xpepe', 5000), hold('SCAM', '0xscam', null, true)] },
-    { label: 'Tetranode', holdings: [hold('WETH', '0xweth', 200000), hold('SOLO', '0xsolo', 9000)] },
-    { label: 'Machi', holdings: [hold('WETH', '0xweth', 50000), hold('PEPE', '0xpepe', 3000)] },
-  ] as never)
+test('consensusHoldings: 2+ whales, but EXCLUDES majors/stables + stale + single-holder + spam', () => {
+  const NOW = 1_800_000_000_000
+  const hold = (token: string, addr: string, usd: number | null, over: Record<string, unknown> = {}) =>
+    ({ network: 'ethereum', token, tokenAddress: addr, qty: 1, usd, curated: false, buys: 1, sells: 0, lastTs: NOW, suspicious: false, ...over })
+  const ch = consensusHoldings(
+    [
+      { label: 'GCR', holdings: [hold('AERO', '0xaero', 5000), hold('WETH', '0xweth', 100000), hold('DEGEN', '0xdeg', 2000), hold('SCAM', '0xscam', null, { suspicious: true })] },
+      { label: 'Tetranode', holdings: [hold('AERO', '0xaero', 9000), hold('WETH', '0xweth', 200000), hold('SOLO', '0xsolo', 9000), hold('DEAD', '0xdead', 3000, { lastTs: NOW - 200 * 86_400_000 })] },
+      { label: 'Machi', holdings: [hold('AERO', '0xaero', 3000), hold('WETH', '0xweth', 50000), hold('DEGEN', '0xdeg', 1000), hold('DEAD', '0xdead', 4000, { lastTs: NOW - 200 * 86_400_000 })] },
+    ],
+    NOW,
+  )
   const tokens = ch.map((c) => c.token)
-  assert.ok(tokens.includes('WETH') && tokens.includes('PEPE'), 'WETH (3) and PEPE (2) qualify')
+  assert.ok(tokens.includes('AERO'), 'AERO (3 whales) qualifies')
+  assert.ok(tokens.includes('DEGEN'), 'DEGEN (2 whales) qualifies')
+  assert.ok(!tokens.includes('WETH'), 'WETH excluded — a major, not an accumulation signal [accum-filter]')
+  assert.ok(!tokens.includes('DEAD'), 'a 2-holder bag not traded in 200d is excluded [stale-filter]')
   assert.ok(!tokens.includes('SOLO'), 'single-holder token excluded')
   assert.ok(!tokens.includes('SCAM'), 'suspicious airdrop excluded')
-  const weth = ch.find((c) => c.token === 'WETH')!
-  assert.equal(weth.holders, 3)
-  assert.equal(weth.totalWallets, 3)
-  assert.equal(weth.pctOfWhales, 100)
-  assert.equal(weth.totalUsd, 350000, 'combined value across holders')
-  assert.equal(weth.wallets[0].usd, 200000, 'largest holder listed first')
-  assert.equal(ch[0].token, 'WETH', 'most-held ranks first')
+  assert.equal(ch[0].token, 'AERO', 'most-held real token ranks first')
+  const aero = ch.find((c) => c.token === 'AERO')!
+  assert.equal(aero.holders, 3)
+  assert.equal(aero.totalUsd, 17000, 'combined value across holders (5000+9000+3000)')
+  assert.equal(aero.wallets[0].usd, 9000, 'largest holder listed first')
 })
 
 test('computeHoldings: flags scam-airdrop symbols (URLs, claim/reward, unicode) as suspicious', () => {

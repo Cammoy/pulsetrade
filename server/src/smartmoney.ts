@@ -46,6 +46,24 @@ export const KNOWN_MAJOR_SYMBOLS = new Set([
   'ARB', 'OP', 'MATIC', 'WMATIC', 'POL', 'WBNB', 'BNB', 'GMX', 'AVAX', 'WAVAX', 'SOL', 'WSOL', 'JUP',
 ])
 
+// Stablecoins — parking cash in a stable is not a directional "accumulation" signal.
+const STABLE_SYMBOLS = new Set([
+  'USDC', 'USDT', 'DAI', 'USDS', 'USDE', 'FRAX', 'TUSD', 'USDD', 'PYUSD', 'GUSD', 'LUSD',
+  'USD1', 'FDUSD', 'USDT0', 'SUSD', 'CRVUSD', 'SDAI', 'USDL', 'USDX', 'BUSD',
+])
+/** A token that is NOT a smart-money "accumulation" signal: wrapped-native + blue-chip
+ *  majors (WETH, WBTC, stETH, …) and stablecoins. A whale holding WETH or parking in USDC
+ *  is noise, not a play — these are excluded from the consensus / accumulation signals
+ *  (the raw activity feed still shows them). [accum-filter] */
+const isSignalToken = (symbol: string): boolean => {
+  const s = symbol.toUpperCase()
+  return !KNOWN_MAJOR_SYMBOLS.has(s) && !STABLE_SYMBOLS.has(s)
+}
+/** A token not traded by ANY tracked wallet in this long is dead/abandoned (rugged tokens
+ *  stop trading once liquidity is pulled) — drop it from the accumulation signals so the
+ *  view shows live conviction, not stale bags. [stale-filter] */
+const STALE_ACCUM_MS = 90 * 86_400_000 // ~3 months
+
 const ADDR = /^0x[a-fA-F0-9]{40}$/
 
 // Curated watchlist of well-documented "smart money" INDIVIDUALS — each address
@@ -343,9 +361,11 @@ export interface ConsensusRow {
  * token — far more actionable than a raw activity list. Ranked by net inflow,
  * tokens with ≥1 net buyer first.
  */
-export function smartMoneyConsensus(events: SmartMoneyEvent[]): ConsensusRow[] {
+export function smartMoneyConsensus(events: SmartMoneyEvent[], now = Date.now()): ConsensusRow[] {
   const agg = new Map<string, ConsensusRow & { buyerSet: Set<string>; sellerSet: Set<string> }>()
   for (const e of events) {
+    if (!isSignalToken(e.token)) continue // no WETH / wrapped-native / stables in accumulation [accum-filter]
+    if (now - e.ts > STALE_ACCUM_MS) continue // ignore activity older than the staleness window [stale-filter]
     const key = `${e.network}:${e.token}`
     const row =
       agg.get(key) ??
@@ -388,12 +408,14 @@ export interface ConsensusHolding {
  * spam is excluded (Holding.suspicious). Ranked by holder count, then value —
  * the tokens the most independent whales actually hold.
  */
-export function consensusHoldings(perWallet: { label: string; holdings: Holding[] }[]): ConsensusHolding[] {
+export function consensusHoldings(perWallet: { label: string; holdings: Holding[] }[], now = Date.now()): ConsensusHolding[] {
   const totalWallets = perWallet.length
   const byTok = new Map<string, { network: string; token: string; tokenAddress: string; wallets: { label: string; usd: number | null }[]; totalUsd: number; anyPriced: boolean; curated: boolean }>()
   for (const { label, holdings } of perWallet) {
     for (const h of holdings) {
       if (h.suspicious) continue // skip airdrops — only real positions count
+      if (!isSignalToken(h.token)) continue // no WETH / wrapped-native / stables in the accumulation signal [accum-filter]
+      if (now - h.lastTs > STALE_ACCUM_MS) continue // drop dead/abandoned bags (no activity for months — rugged or illiquid) [stale-filter]
       const key = `${h.network}:${h.tokenAddress.toLowerCase()}`
       const cur = byTok.get(key) ?? { network: h.network, token: h.token, tokenAddress: h.tokenAddress, wallets: [], totalUsd: 0, anyPriced: false, curated: false }
       cur.wallets.push({ label, usd: h.usd })
