@@ -11,7 +11,9 @@
     "dev": "concurrently -n engine,web -c yellow,cyan \"npm run dev -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
-    "test": "npm run test -w server"
+    "test": "npm run test -w server && npm run test -w web",
+    "test:server": "npm run test -w server",
+    "test:web": "npm run test -w web"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

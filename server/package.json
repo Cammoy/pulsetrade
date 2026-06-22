@@ -3,13 +3,23 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "node scripts/launch.mjs --watch",
+    "start": "node scripts/launch.mjs",
+    "verify:turnkey": "node --import tsx scripts/verify-turnkey.ts",
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
+    "@dfinity/agent": "^2.4.1",
+    "@dfinity/principal": "^2.4.1",
+    "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
+    "@turnkey/sdk-server": "^6.1.1",
+    "@turnkey/solana": "^1.1.31",
+    "@turnkey/viem": "^0.14.31",
     "bs58": "^6.0.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
