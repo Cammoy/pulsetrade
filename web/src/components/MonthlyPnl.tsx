@@ -1,16 +1,21 @@
 import { useState } from 'react'
 import { useStore } from '../store'
 import { fmtSign, fmtUsd, pnlColor } from '../format'
+import { reconcileMonthly } from '../monthly'
+import { RISKS } from '../stats'
 
 const MONTH_LABEL = (key: string) => {
   const [y, m] = key.split('-').map(Number)
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return key
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 }
 
 export default function MonthlyPnl() {
-  const { monthly } = useStore()
+  const { monthly, mode } = useStore()
   const [open, setOpen] = useState(true)
-  const months = Object.keys(monthly).sort().reverse()
+  // Show only the active workspace's ledger (paper vs live never mix).
+  const activeMonthly = mode === 'live' ? monthly.live : monthly.paper
+  const months = Object.keys(activeMonthly).sort().reverse()
 
   return (
     <section className="glass overflow-hidden">
@@ -26,7 +31,7 @@ export default function MonthlyPnl() {
 
       {open && (
         <div className="overflow-auto border-t border-white/[0.05]">
-          <table className="w-full text-xs">
+          <table className="w-full min-w-[760px] text-xs">
             <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
                 {['Month', 'Realized P&L', 'Win rate', 'Fees', 'Profit swept out', 'Volume', 'Conservative', 'Balanced', 'Aggressive'].map((h) => (
@@ -43,19 +48,21 @@ export default function MonthlyPnl() {
                 </tr>
               )}
               {months.map((k) => {
-                const m = monthly[k]
-                const wr = m.wins + m.losses > 0 ? Math.round((m.wins / (m.wins + m.losses)) * 100) : null
+                const m = activeMonthly[k]
+                // Reconcile so the per-tolerance columns always sum to the realized
+                // headline (no 1¢ independent-rounding drift). [correctness]
+                const { cols, realized, winRate } = reconcileMonthly(m)
                 return (
                   <tr key={k} className="border-t border-white/[0.04] tabular-nums hover:bg-white/[0.02]">
                     <td className="px-3 py-2 font-medium text-slate-200">{MONTH_LABEL(k)}</td>
-                    <td className={`px-3 py-2 font-semibold ${pnlColor(m.realizedUsd)}`}>{fmtSign(m.realizedUsd)}</td>
-                    <td className="px-3 py-2 text-slate-300">{wr === null ? '—' : `${wr}% (${m.wins}W/${m.losses}L)`}</td>
+                    <td className={`px-3 py-2 font-semibold ${pnlColor(realized)}`}>{fmtSign(realized)}</td>
+                    <td className="px-3 py-2 text-slate-300">{winRate === null ? '—' : `${winRate}% (${m.wins}W/${m.losses}L)`}</td>
                     <td className="px-3 py-2 text-slate-500">{fmtUsd(m.feesUsd)}</td>
                     <td className="px-3 py-2 text-cyan-300">{fmtUsd(m.nativeTakenUsd)}</td>
                     <td className="px-3 py-2 text-slate-400">{fmtUsd(m.volumeUsd)}</td>
-                    {(['conservative', 'balanced', 'aggressive'] as const).map((r) => (
-                      <td key={r} className={`px-3 py-2 ${m.byRisk[r] !== undefined ? pnlColor(m.byRisk[r]) : 'text-slate-600'}`}>
-                        {m.byRisk[r] !== undefined ? fmtSign(m.byRisk[r]) : '—'}
+                    {RISKS.map((r) => (
+                      <td key={r} className={`px-3 py-2 ${cols[r] !== undefined ? pnlColor(cols[r]!) : 'text-slate-600'}`}>
+                        {cols[r] !== undefined ? fmtSign(cols[r]!) : '—'}
                       </td>
                     ))}
                   </tr>

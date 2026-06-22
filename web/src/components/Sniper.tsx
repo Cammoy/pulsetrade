@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import type { SafePool, RiskReport } from '../types'
-import { fmtUsd, fmtPct } from '../format'
+import { fmtUsd, fmtPct, parseAmount } from '../format'
+import { useModal } from '../useModal'
 import RiskReportPanel from './RiskReport'
 import AutoSniperPanel from './AutoSniper'
+import NetworkSelect from './NetworkSelect'
 
 const fmtLiq = (v: number | null) => (v === null ? '—' : v >= 1000 ? fmtUsd(v) : `$${v.toFixed(0)}`)
 const fmtAge = (m: number | null) => (m === null ? '—' : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`)
 
 export default function Sniper() {
   const { meta, openSniper, mode, refresh, autoSniper } = useStore()
-  const [tab, setTab] = useState<'manual' | 'auto'>('manual')
+  const [tab, setTab] = useState<'manual' | 'auto'>(() => useStore.getState().sniperTab)
   const [network, setNetwork] = useState('base')
   const [feed, setFeed] = useState<'new' | 'trending'>('new')
   const [pools, setPools] = useState<SafePool[]>([])
@@ -27,6 +29,11 @@ export default function Sniper() {
   const [sweepTo, setSweepTo] = useState<'native' | 'usdt'>('native')
   const [arming, setArming] = useState(false)
   const [armErr, setArmErr] = useState<string | null>(null)
+
+  useModal(() => openSniper(false))
+  // On close, reset the entry tab to manual so only the dashboard strip's openSniperAuto
+  // (which sets sniperTab='auto') ever lands on the Auto-Sniper tab.
+  useEffect(() => () => useStore.setState({ sniperTab: 'manual' }), [])
 
   const load = async () => {
     setLoading(true)
@@ -87,11 +94,12 @@ export default function Sniper() {
   }
 
   if (!meta) return null
-  const canArm = report?.tradeable && Number(budget) >= 10 && Number(tp) > 0 && Number(sl) > 0 && Number(hold) > 0
+  const budgetNum = parseAmount(budget)
+  const canArm = report?.tradeable && budgetNum !== null && budgetNum >= 10 && Number(tp) > 0 && Number(sl) > 0 && Number(hold) > 0
 
   return (
     <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openSniper(false)}>
-      <div className="glass animate-sheet pb-safe flex max-h-[94vh] w-full max-w-4xl flex-col !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="glass animate-sheet pb-safe flex max-h-[94vh] w-full max-w-4xl flex-col !rounded-b-none border-white/10 bg-[var(--modal)] p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-white">🎯 Sniper</h2>
@@ -104,9 +112,9 @@ export default function Sniper() {
           <button className="btn-ghost !px-2.5 !py-1" onClick={() => openSniper(false)}>✕</button>
         </div>
 
-        <div className="mt-3 flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+        <div className="mt-3 flex items-center gap-1 seg-track p-0.5 text-xs">
           {(['manual', 'auto'] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`flex-1 cursor-pointer rounded-lg px-3 py-1.5 font-semibold transition-colors ${tab === t ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+            <button key={t} onClick={() => setTab(t)} className={`flex-1 cursor-pointer rounded-lg px-3 py-1.5 font-semibold transition-colors ${tab === t ? 'seg-active' : 'text-slate-400 hover:text-slate-200'}`}>
               {t === 'manual' ? '🎯 Pick a coin' : '🤖 Auto-Sniper'}
               {t === 'auto' && autoSniper?.enabled && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 align-middle" />}
             </button>
@@ -118,14 +126,10 @@ export default function Sniper() {
         ) : (
           <>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <select className="input !w-36 !py-1.5 text-xs" value={network} onChange={(e) => setNetwork(e.target.value)}>
-                {meta.networks.filter((n) => n.evm !== false).map((n) => (
-                  <option key={n.id} value={n.id}>{n.name}</option>
-                ))}
-              </select>
-              <div className="flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+              <NetworkSelect className="input !w-36 !py-1.5 text-xs" value={network} onChange={setNetwork} networks={meta.networks.filter((n) => n.evm !== false && n.tradeable !== false)} />
+              <div className="flex items-center seg-track p-0.5 text-xs">
                 {(['new', 'trending'] as const).map((f) => (
-                  <button key={f} onClick={() => setFeed(f)} className={`cursor-pointer rounded-lg px-3 py-1 font-medium capitalize ${feed === f ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                  <button key={f} onClick={() => setFeed(f)} className={`cursor-pointer rounded-lg px-3 py-1 font-medium capitalize ${feed === f ? 'seg-active' : 'text-slate-500 hover:text-slate-300'}`}>
                     {f === 'new' ? '🆕 New' : '🔥 Trending'}
                   </button>
                 ))}
@@ -136,13 +140,13 @@ export default function Sniper() {
 
             <div className="mt-3 grid flex-1 grid-cols-1 gap-3 overflow-hidden md:grid-cols-2">
               {/* Safe pool feed */}
-              <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/[0.06]">
-                <div className="border-b border-white/[0.06] px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-emerald-400/80">
+              <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/[0.08]">
+                <div className="border-b border-white/[0.08] px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
                   🛡️ Safe coins only
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto">
                   {loading && <div className="p-3 text-xs text-slate-500">Screening fresh pools for honeypots, sell-blocks & whale dominance…</div>}
-                  {feedErr && <div className="p-3 text-xs text-amber-400">{feedErr}</div>}
+                  {feedErr && <div className="p-3 text-xs text-amber-300">{feedErr}</div>}
                   {!loading && !feedErr && pools.length === 0 && (
                     <div className="p-4 text-xs leading-relaxed text-slate-500">
                       No coins pass the safety gate right now — that’s normal; most new launches are unsafe. Try Trending, switch network, or rescan in a minute.
@@ -176,7 +180,7 @@ export default function Sniper() {
               </div>
 
               {/* Detail + arm */}
-              <div className="flex min-h-0 flex-col overflow-auto rounded-xl border border-white/[0.06] p-3">
+              <div className="flex min-h-0 flex-col overflow-auto rounded-xl border border-white/[0.08] p-3">
                 {!selected && <div className="flex h-full items-center justify-center px-4 text-center text-xs text-slate-600">Select a safe coin to review its full screen and snipe it.</div>}
                 {selected && report && (
                   <>

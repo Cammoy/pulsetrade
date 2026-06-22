@@ -45,7 +45,7 @@ export default function RiskReportPanel({ report, compact }: { report: RiskRepor
         </div>
       </div>
 
-      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--border-strong)] dark:bg-white/10">
         <div className={`h-full rounded-full ${v.bar}`} style={{ width: `${report.score}%` }} />
       </div>
 

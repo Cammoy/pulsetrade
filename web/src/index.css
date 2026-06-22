@@ -1,22 +1,151 @@
 @import 'tailwindcss';
 
-:root {
+/* Class-based dark variant so `dark:` utilities follow the <html> theme class. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Theme tokens ────────────────────────────────────────────────────────────
+   Dark is the default identity. Tailwind v4 resolves white/X overlays, borders AND
+   text-white through var(--color-white), and every text-slate-X through
+   var(--color-slate-X) — so LIGHT is mostly a remap of those two scales plus a few
+   opaque surface tokens. `--ink` is the always-white text that sits ON a coloured
+   fill (buttons, active chips) and must NOT flip with the theme. */
+:root,
+.dark {
   color-scheme: dark;
+  --bg: #070a12;
+  --bg-2: #05070d; /* far-left rail */
+  --sidebar: #0a0d16;
+  --header: rgba(10, 14, 23, 0.72);
+  --modal: rgba(11, 15, 26, 0.95);
+  --menu: #0d1320; /* popovers / dropdowns */
+  --head: #0c101c; /* sticky table headers */
+  --ink: #ffffff;
+  --glow-1: rgba(124, 58, 237, 0.18);
+  --glow-2: rgba(6, 182, 212, 0.12);
+  --glow-3: rgba(236, 72, 153, 0.1);
+  /* contrast-hardened muted text (analysed vs the dark bg — all ≥ WCAG AA) */
+  --color-slate-500: #7c8aa3; /* 5.67:1 — was #64748b (4.16) */
+  --color-slate-600: #6b7a90; /* 4.53:1 — was #475569 (2.61) */
+  /* bold accents */
+  --accent-green: #2bd576;
+  --accent-purple: #a855f7;
+  --accent-pink: #ec4899;
+  /* sparkline strokes (theme-aware via Sparkline.tsx) */
+  --spark-up: #34d399;
+  --spark-down: #fb7185;
+  --spark-baseline: #475569;
+  /* Motion easings — one premium ease-out everywhere, one with a touch of spring. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+/* LIGHT THEME — premium fintech: warm off-white canvas, pure-white OPAQUE cards,
+   cool-grey hairline borders, soft layered shadows, ONE confident indigo accent.
+   Hard rule: NO gradients in light. Depth = opaque fill + border + shadow, never
+   translucency. The .light .X overrides at the bottom of this file turn every
+   translucent bg-white/[0.0X] consumer into its opaque recipe. */
+.light {
+  color-scheme: light;
+
+  /* Surfaces: warm off-white canvas, pure-white elevation */
+  --bg: #e4e7ee; /* calm COOL-grey canvas — deeper than near-white, never off-white/cream */
+  --bg-2: #dce0e9; /* secondary surface */
+  --sidebar: #1b2230; /* DEEP SLATE sidebar — the .app-sidebar block flips its text to light */
+  --header: rgba(246, 248, 251, 0.82); /* cool frosted header over the light content */
+  --modal: rgba(255, 255, 255, 0.98);
+  --menu: #ffffff; /* content popovers / dropdowns (the sidebar's own menu goes dark) */
+  --head: #e7eaf1; /* sticky table headers — cool tint vs white rows */
+  --ink: #ffffff; /* on-colour text (buttons, active pills) stays white */
+
+  /* A soft TRI-HUE ambient wash (indigo · teal · violet) gives the page real colour
+     life over the warm canvas — present but gentle, never harsh coloured blobs. This
+     is what lifts light out of "white + one blue". */
+  --glow-1: rgba(99, 102, 241, 0.10); /* indigo, top-left */
+  --glow-2: rgba(56, 189, 248, 0.06); /* sky, top-right */
+  --glow-3: rgba(139, 92, 246, 0.08); /* violet, bottom */
+
+  /* white-driven utilities flip to dark ink; every translucent consumer is
+     overridden below to an OPAQUE recipe, so this only surfaces as solid
+     heading text + 1px hairlines. */
+  --color-white: #0f172a;
+
+  /* Neutral text scale: true ink → muted slate (all ≥ AA on #fff / #f6f5f3) */
+  --color-slate-100: #0f172a;
+  --color-slate-200: #1e293b;
+  --color-slate-300: #334155;
+  --color-slate-400: #475569;
+  --color-slate-500: #64748b; /* muted — 4.76:1 */
+  /* slate-600 is used widely for essential muted text (labels, footnotes, data), so it must
+     clear AA — the old #8a93a3 was ~2.8:1 and failed. #5b6577 is ≥4.5:1 on white, the sunken
+     tile (#e9ecf3) AND the page canvas (#e4e7ee). It reads a touch darker than -500 rather than
+     lighter, but readable beats a decorative-but-illegible tier. Truly decorative use is rare. */
+  --color-slate-600: #5b6577;
+
+  /* Coloured chip text / P&L numbers / status dots: -300/-400 darkened to AA on white */
+  --color-emerald-300: #047857;
+  --color-emerald-400: #059669;
+  --color-teal-300: #0f766e;
+  --color-cyan-300: #0e7490;
+  --color-sky-300: #0369a1;
+  --color-sky-400: #0284c7;
+  --color-indigo-300: #4338ca;
+  --color-indigo-400: #4f46e5; /* the single confident accent (also active dots) */
+  --color-violet-300: #6d28d9;
+  --color-amber-300: #b45309;
+  --color-amber-400: #d97706;
+  --color-rose-300: #be123c;
+  --color-rose-400: #e11d48;
+
+  /* The -200 (and the one stray light-100) accent shades aren't remapped by default, so they
+     stay pale and FAIL on a light surface (e.g. the emerald "Auto-Sniper running" label, the
+     indigo info panels). Map each to the same AA-on-white ink as its -300 so every
+     text-{accent}-200 reads. SAFE: no bg-{accent}-200/-100 utility exists in the app, and
+     dark:-prefixed uses don't apply in light mode — so this only darkens unprefixed light text. */
+  --color-emerald-200: #047857;
+  --color-teal-200: #0f766e;
+  --color-cyan-200: #0e7490;
+  --color-sky-200: #0369a1;
+  --color-indigo-200: #4338ca;
+  --color-indigo-100: #4338ca;
+  --color-violet-200: #6d28d9;
+  --color-amber-200: #b45309;
+  --color-rose-200: #be123c;
+
+  /* Reusable elevation + accent tokens (consumed by the .light overrides below) */
+  --border-hairline: #d9dde7; /* cool ~1px hairline */
+  --border-strong: #c5ccd9; /* hover / emphasised border */
+  --surface-card: #ffffff; /* elevated tile fill — crisp white pops on the cool-grey canvas */
+  --surface-sunken: #e9ecf3; /* inner tiles / code blocks / table headers */
+  --surface-sunken-2: #edeff5; /* recessed wells (lane bodies) — a hair lighter, keeps the two layers distinct */
+  --surface-hover: #e9ecf3; /* row + ghost hover fill */
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 12px -2px rgba(16, 24, 40, 0.06);
+  --shadow-pop: 0 4px 8px -2px rgba(16, 24, 40, 0.08), 0 12px 28px -6px rgba(16, 24, 40, 0.12);
+  --accent: #4f46e5; /* indigo-600 — primary fill */
+  --accent-hover: #4338ca; /* indigo-700 */
+  --accent-soft: #ece9ff; /* soft indigo-violet — avatar / selected tint */
+  --accent-2: #0d9488; /* teal-600 — secondary accent for variety (used sparingly) */
+  --accent-2-soft: #d8f1ec; /* soft teal tint */
+  --accent-ring: rgba(79, 70, 229, 0.32);
+  --spark-up: #059669;
+  --spark-down: #e11d48;
+  --spark-baseline: var(--border-strong);
 }
 
 body {
   @apply text-slate-200 antialiased;
   overflow-x: hidden;
-  background: #070a12;
+  background: var(--bg);
   background-image:
-    radial-gradient(1200px 600px at 15% -10%, rgba(79, 70, 229, 0.16), transparent 60%),
-    radial-gradient(1000px 500px at 95% 0%, rgba(6, 182, 212, 0.1), transparent 55%);
+    radial-gradient(1200px 600px at 12% -12%, var(--glow-1), transparent 58%),
+    radial-gradient(1000px 520px at 92% -4%, var(--glow-2), transparent 54%),
+    radial-gradient(900px 500px at 78% 108%, var(--glow-3), transparent 60%);
   background-attachment: fixed;
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Inter, sans-serif;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 .glass {
-  @apply rounded-2xl border border-white/[0.06] bg-white/[0.03] backdrop-blur-md;
+  @apply rounded-2xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-md;
 }
 
 .glass-hover {
@@ -30,16 +159,77 @@ body {
 }
 
 .btn-primary {
-  @apply bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-lg shadow-indigo-500/25 hover:brightness-110 active:scale-[0.98];
+  @apply bg-gradient-to-r from-violet-500 via-indigo-500 to-cyan-500 text-[var(--ink)] shadow-lg shadow-indigo-500/30 transition-all duration-150 hover:-translate-y-px hover:shadow-indigo-500/45 hover:brightness-110 active:translate-y-0 active:scale-[0.97];
 }
 
 .btn-ghost {
-  @apply border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.09] hover:text-white;
+  @apply border border-white/10 bg-white/[0.04] text-slate-300 transition-all duration-150 hover:bg-white/[0.09] hover:text-white active:scale-[0.98];
 }
+
+/* Destructive action button (confirm dialog) — vivid rose, white text, both themes. */
+.btn-danger {
+  @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-40;
+  background-color: #e11d48;
+  color: #fff;
+}
+.btn-danger:hover { background-color: #be123c; }
+.btn-danger:active { transform: scale(0.98); }
+
+/* HTML5 <dialog> confirm (ConfirmDialog.tsx): transparent box — the inner card
+   carries the surface — centered, with a themed, blurred ::backdrop. */
+/* margin:auto re-centers the modal — Tailwind preflight resets dialog margin to 0,
+   which otherwise pins a :modal dialog to the top-left. */
+dialog.app-dialog { margin: auto; max-width: min(92vw, 27rem); border: none; padding: 0; background: transparent; color: inherit; overflow: visible; }
+dialog.app-dialog::backdrop { background: rgba(2, 4, 10, 0.62); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.light dialog.app-dialog::backdrop { background: rgba(15, 23, 42, 0.34); }
 
 .chip {
   @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium;
 }
+
+/* ── Bold brand accents (bright purple → pink → cyan) ───────────────────────── */
+.brand-gradient {
+  background-image: linear-gradient(135deg, var(--accent-purple), var(--accent-pink) 48%, #22d3ee);
+}
+.text-gradient {
+  background-image: linear-gradient(90deg, var(--accent-purple), var(--accent-pink) 50%, #22d3ee);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ── Micro-interactions ──────────────────────────────────────────────────── */
+.tap {
+  transition: transform 0.12s ease;
+}
+.tap:active {
+  transform: scale(0.95);
+}
+.hover-pop {
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.hover-pop:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px -14px var(--accent-purple);
+}
+
+/* ── Global micro-motion ──────────────────────────────────────────────────────
+   Every interactive element eases its state changes by default, so nothing snaps
+   on hover / press / theme-switch ("sticky" feel). An explicit Tailwind transition-*
+   utility on an element wins where a specific timing is intended. */
+button, a, summary, label, input, select, textarea,
+[role='button'], [role='tab'], [role='switch'], [role='menuitem'], .chip {
+  transition:
+    background-color 0.18s var(--ease-out),
+    border-color 0.18s var(--ease-out),
+    color 0.18s var(--ease-out),
+    box-shadow 0.2s var(--ease-out),
+    transform 0.16s var(--ease-out),
+    opacity 0.18s var(--ease-out),
+    filter 0.18s var(--ease-out);
+}
+/* Tactile press on segmented toggles + tabs (transform-free buttons → safe). */
+.seg-track button:active:not(:disabled) { transform: scale(0.96); }
 
 .input {
   @apply w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm text-slate-100 outline-none transition-colors placeholder:text-slate-500 focus:border-indigo-400/60;
@@ -53,6 +243,21 @@ body {
 
 .pulse-dot {
   animation: pulse-ring 1.8s ease-out infinite;
+}
+
+/* Auto-Sniper "scanning" shimmer: a highlight that sweeps across a thin track,
+   signalling the scanner is alive even between snipes. */
+@keyframes scan-sweep {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+.scan-sweep::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(129, 140, 248, 0.85), transparent);
+  animation: scan-sweep 1.9s ease-in-out infinite;
 }
 
 @keyframes flash-row {
@@ -72,7 +277,7 @@ body {
 }
 
 .animate-in {
-  animation: fade-in-up 0.3s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+  animation: fade-in-up 0.34s var(--ease-out) both;
 }
 
 @keyframes sheet-up {
@@ -115,16 +320,54 @@ body {
 }
 
 .card-lift {
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition: transform 0.22s var(--ease-out), box-shadow 0.22s var(--ease-out), border-color 0.22s var(--ease-out);
+  will-change: transform;
 }
 
 .card-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 30px -12px rgba(0, 0, 0, 0.6);
+  transform: translateY(-3px);
+  box-shadow: 0 16px 36px -14px rgba(0, 0, 0, 0.55);
+}
+
+@keyframes star-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.4); }
+  100% { transform: scale(1); }
+}
+
+.star-pop {
+  animation: star-pop 0.26s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes flash-down {
+  0% { background-color: rgba(244, 63, 94, 0.22); }
+  100% { background-color: transparent; }
+}
+
+.flash-down {
+  animation: flash-down 1.4s ease-out 1;
+}
+
+/* Hide the native scrollbar where a custom affordance (dot-rail / peek) replaces
+   it — the horizontal market deck and each lane's vertical body. */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Edge fade for the horizontal deck — softens hard cutoffs at the scroll ends. */
+.deck-fade {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 26px, #000 calc(100% - 44px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 26px, #000 calc(100% - 44px), transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-in, .animate-sheet, .animate-backdrop, .spark-line, .pulse-dot { animation: none !important; }
+  /* Universal opt-out: kill every animation + transition for motion-sensitive users. */
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-in, .animate-sheet, .animate-backdrop, .spark-line, .pulse-dot, .star-pop { animation: none !important; }
   .card-lift, .card-lift:hover { transition: none; transform: none; }
 }
 
@@ -147,3 +390,187 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.25); border-radius: 9999px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.4); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   LIGHT THEME — opaque surface overrides + theme-aware helpers.
+   In light, --color-white:#0f172a would turn every bg-white/[0.0X] /
+   border-white/[0.0X] into a muddy dark wash. These rules replace each with an
+   opaque near-white fill + a real hairline + a soft shadow, kill all gradients,
+   and tame the dark-calibrated colour glows. Dark mode is untouched.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Cards */
+.light .glass {
+  background-color: var(--surface-card);
+  border-color: var(--border-hairline);
+  box-shadow: var(--shadow-card);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.light .glass-hover { transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease; }
+.light .glass-hover:hover {
+  border-color: var(--border-strong);
+  background-color: var(--surface-card);
+  box-shadow: 0 2px 4px rgba(16, 24, 40, 0.05), 0 10px 24px -6px rgba(16, 24, 40, 0.12);
+}
+
+/* Stray white/black overlay borders → solid warm hairline */
+.light .border-white\/\[0\.08\],
+.light .border-white\/\[0\.06\],
+.light .border-white\/\[0\.05\],
+.light .border-white\/\[0\.04\],
+.light .border-white\/10,
+.light .border-black\/50 { border-color: var(--border-hairline) !important; }
+
+/* Primary button: a refined indigo→violet gradient (the dark theme's bolder
+   violet→indigo→cyan is intentionally toned down for light, not flattened to one flat blue). */
+.light .btn-primary {
+  background-image: linear-gradient(135deg, #4f46e5, #7c3aed);
+  background-color: var(--accent);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.1), 0 6px 16px -4px var(--accent-ring);
+}
+.light .btn-primary:hover { background-image: linear-gradient(135deg, #4338ca, #6d28d9); filter: none; }
+
+/* Ghost button + inputs: opaque white fill + hairline (not a dark wash) */
+.light .btn-ghost { background-color: var(--surface-card); border-color: var(--border-hairline); color: var(--color-slate-300); }
+.light .btn-ghost:hover { background-color: var(--surface-hover); border-color: var(--border-strong); color: var(--color-slate-100); }
+.light .input { background-color: var(--surface-card); border-color: var(--border-hairline); color: var(--color-slate-100); }
+.light .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+
+/* Brand mark / wordmark: a refined indigo→violet gradient (premium, not flat indigo) */
+.light .brand-gradient { background-image: linear-gradient(135deg, #4f46e5, #7c3aed 60%, #6366f1); }
+.light .text-gradient {
+  background-image: linear-gradient(90deg, #4f46e5, #7c3aed);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Inline Tailwind gradients (avatars / accent fills) → solid indigo.
+   Semantic data-viz meters opt out with .fg-meter.
+   The :not([class*=":bg-gradient-to"]) guard excludes VARIANT-prefixed gradients
+   (dark:/hover:/… — the colon is the tell) so an element whose gradient is dark-ONLY
+   (e.g. text-slate-900 dark:bg-clip-text dark:bg-gradient-to-r) is left untouched in
+   light mode instead of getting an indigo block behind dark text. */
+.light [class*="bg-gradient-to"]:not([class*=":bg-gradient-to"]):not(.fg-meter):not(.sniper-strip):not(.sniper-hero) { background-image: none !important; background-color: var(--accent); }
+.light [class*="bg-gradient-to"]:not([class*=":bg-gradient-to"]):not(.fg-meter):not(.sniper-strip):not(.sniper-hero).text-transparent,
+.light [class*="bg-gradient-to"]:not([class*=":bg-gradient-to"]):not(.fg-meter):not(.sniper-strip):not(.sniper-hero).bg-clip-text {
+  background-color: transparent !important;
+  -webkit-text-fill-color: var(--accent);
+  color: var(--accent) !important;
+}
+
+/* Dark-calibrated colour drop-shadow blooms → neutral on light */
+.light .hover-pop:hover { box-shadow: 0 10px 28px -12px rgba(16, 24, 40, 0.22); }
+.light .card-lift:hover { box-shadow: 0 10px 30px -12px rgba(16, 24, 40, 0.16); }
+
+/* Light scrollbar thumb */
+.light ::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.18); }
+.light ::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.3); }
+
+/* ── Shared theme-aware helpers (dark defaults mirror the existing look) ───── */
+.seg-track { @apply rounded-xl border border-white/10 bg-white/[0.03]; }
+.light .seg-track { border-color: var(--border-hairline); background-color: var(--surface-sunken); }
+.seg-active { @apply bg-white/10 text-[var(--ink)] shadow; }
+.light .seg-active { background-color: var(--accent); color: #ffffff; box-shadow: var(--shadow-card); }
+
+/* Active nav row (Sidebar): dark = 12% indigo tint; light = opaque indigo-50 fill +
+   inset hairline so the selected row reads crisp instead of a muddy translucent wash.
+   Both themes scoped (no unlayered base) so the light fill can't lose the cascade. */
+.dark .nav-active { background-color: rgb(99 102 241 / 0.12); }
+.light .nav-active { background-color: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-ring); }
+
+.tile-sunken { @apply bg-black/20; }
+.light .tile-sunken { background-color: var(--surface-sunken); }
+
+.code-block { @apply bg-black/30; }
+.light .code-block { background-color: var(--surface-sunken); color: var(--color-slate-200); }
+
+/* Token avatars: dark keeps the navy gradient sheen, light = solid brand colour
+   (color-mix darkens pale chains so the white ticker stays legible). No gradient in light. */
+.token-avatar { background-color: var(--tok, #64748b); background-image: linear-gradient(135deg, transparent, #1e293b); }
+.light .token-avatar { background-image: none; background-color: color-mix(in srgb, var(--tok, #64748b) 80%, #1e293b); }
+
+/* Market status hero: opaque white card that floats ABOVE the lanes (deeper shadow)
+   with a solid AA status frame, so it reads as the section header. Dark keeps its glass. */
+.light .market-hero {
+  background-color: var(--surface-card);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px -6px rgba(16, 24, 40, 0.1);
+}
+.light .market-hero.border-emerald-400\/40 { border-color: var(--color-emerald-400); }
+.light .market-hero.border-amber-400\/40 { border-color: var(--color-amber-400); }
+.light .market-hero.border-rose-400\/40 { border-color: var(--color-rose-400); }
+
+/* ── Market deck (light): grey wells + flat cards + tamed accents ──────────────
+   The lane body recesses to a faint well so the white coin cards read as distinct
+   tiles (was white-on-white); accents that aren't theme-remapped get tamed. */
+.light .lane-body { background-color: var(--surface-sunken-2); }
+.light .lane-body > .glass { box-shadow: none; } /* flat at rest; still lifts on hover */
+.light .row-accent { display: none; } /* drop the per-row candy stripe */
+.light .lane-glow { display: none; } /* drop the muddy corner-glow smudge */
+/* lane top accent bar → AA, tonally matched to its header title (per hue) */
+.light .lane-bar.bg-amber-400 { background-color: var(--color-amber-300); }
+.light .lane-bar.bg-cyan-400 { background-color: var(--color-cyan-300); }
+.light .lane-bar.bg-emerald-400 { background-color: var(--color-emerald-300); }
+.light .lane-bar.bg-rose-400 { background-color: var(--color-rose-300); }
+.light .lane-bar.bg-indigo-400 { background-color: var(--color-indigo-300); }
+.light .lane-bar.bg-violet-400 { background-color: var(--color-violet-300); }
+/* coloured chip fills (-500/15, -500/10) aren't remapped → crisp opaque -50 tints */
+.light .chip.bg-emerald-500\/15 { background-color: #dcfce7; }
+.light .chip.bg-rose-500\/15 { background-color: #ffe4e6; }
+.light .chip.bg-slate-500\/15 { background-color: var(--surface-sunken); }
+.light .chip.bg-amber-500\/10 { background-color: #fef3c7; }
+.light .bg-violet-500\/15 { background-color: #ede9fe; }
+/* Fear & Greed meter: full-strength scale + a dark needle ringed in white */
+.light .fg-meter { opacity: 1; background-image: linear-gradient(to right, #e11d48, #d97706 50%, #059669) !important; }
+.light .fg-needle { background-color: #0f172a; box-shadow: 0 0 0 2px #ffffff; }
+/* fallback coin avatar → calm soft-indigo so it doesn't out-shout real logos */
+.light .token-fallback { background-color: var(--accent-soft) !important; color: var(--accent) !important; }
+
+/* Auto-Sniper banner + in-modal hero: a soft emerald→indigo tint on white (mirrors the
+   dark version's faint wash + adds green/indigo colour variety) instead of the gradient
+   killer's bold flat-indigo bar. These two are opted out of the killer via :not() above. */
+.light .sniper-strip { background-image: linear-gradient(90deg, #e9faf0, #eef0ff); border-color: #bfe9d3; }
+.light .sniper-hero { background-image: linear-gradient(135deg, #e9faf0, #eef0ff 55%, #f2ecff); border-color: #bfe9d3; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   TWO-TONE LIGHT SHELL — a deep slate sidebar against the light content area.
+   "Not everything should be light": the sidebar subtree RE-DECLARES the dark token
+   values so its text/icons/overlays render light-on-dark (Tailwind utilities read
+   these vars), and the few force-overridden surface rules are restored to their dark
+   recipe. The content area stays light. Dark theme untouched (all .light-scoped).
+   ════════════════════════════════════════════════════════════════════════════ */
+.light .app-sidebar {
+  --sidebar: #1b2230;
+  --bg-2: #161c28;
+  --menu: #222b3c; /* the sidebar's OWN dropdown goes dark to match */
+  --color-white: #ffffff; /* flips every bg-white/X + text-white overlay back to light-on-dark */
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #8b97ac;
+  --color-slate-600: #6b7a90;
+  --color-emerald-300: #6ee7b7;
+  --color-emerald-400: #34d399;
+  --color-cyan-300: #67e8f9;
+  --color-sky-300: #7dd3fc;
+  --color-sky-400: #38bdf8;
+  --color-indigo-300: #a5b4fc;
+  --color-indigo-400: #818cf8;
+  --color-violet-300: #c4b5fd;
+  --color-amber-300: #fcd34d;
+  --color-amber-400: #fbbf24;
+  --color-rose-300: #fda4af;
+  --color-rose-400: #fb7185;
+  --accent-soft: rgba(99, 102, 241, 0.16);
+  color: #cbd5e1;
+}
+/* Restore the dark recipe for the force-overridden surfaces that appear in the sidebar */
+.light .app-sidebar .border-white\/\[0\.08\],
+.light .app-sidebar .border-white\/10,
+.light .app-sidebar .border-black\/50 { border-color: rgba(255, 255, 255, 0.08) !important; }
+.light .app-sidebar .nav-active { background-color: rgba(99, 102, 241, 0.16) !important; box-shadow: none !important; }
+.light .app-sidebar .tile-sunken { background-color: rgba(255, 255, 255, 0.05) !important; }
+.light .app-sidebar .seg-track { background-color: rgba(255, 255, 255, 0.04) !important; border-color: rgba(255, 255, 255, 0.1) !important; }
+.light .app-sidebar .token-avatar { background-color: var(--tok, #64748b) !important; background-image: linear-gradient(135deg, transparent, #1e293b) !important; }
