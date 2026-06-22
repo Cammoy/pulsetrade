@@ -8,8 +8,8 @@ import path from 'node:path'
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-p2tail-'))
 
-const { state } = await import('../src/store.js')
-const { deleteBot, __test } = await import('../src/engine.js')
+const { state, dayKey } = await import('../src/store.js')
+const { deleteBot, reconcilePendingBuys, __test } = await import('../src/engine.js')
 const { strategyById } = await import('../src/strategies.js')
 const { RISK } = await import('../src/risk.js')
 const { slTpFallback } = __test
@@ -66,6 +66,30 @@ test('P2-14: deleting a running follow-mirror returns its cash to the follow poo
   state.bots.push({ id: 'b2', followId: 'f1', cashUsd: 40, mode: 'paper', position: { qty: 0, avgCostUsd: 0 }, state: {}, network: 'base', token: 'Y' } as any)
   assert.equal(deleteBot('b2'), true)
   assert.equal(state.follows[0].poolUsd, 140, 'cash reclaimed to the follow pool')
+})
+
+// ── P1-7: in-flight live-buy journal recovered on boot ───────────────────────
+test('P1-7: boot books a journaled in-flight buy conservatively and flags the bot', () => {
+  state.bots.length = 0
+  state.liveSpend = { day: '', usd: 0 }
+  state.breaker = { tripped: false, reason: '', trippedAt: null, realizedUsd: 0, spentUsd: 0 }
+  state.bots.push({ id: 'pb1', mode: 'live', position: { qty: 0, avgCostUsd: 0 }, state: {}, network: 'base', token: 'X' } as any)
+  // A buy was journaled before the swap; we "crashed" before it was booked/cleared.
+  state.pendingBuys = [{ botId: 'pb1', network: 'base', token: 'X', usd: 60, ts: 1 }]
+  const n = reconcilePendingBuys()
+  assert.equal(n, 1)
+  assert.equal(state.pendingBuys.length, 0, 'journal cleared')
+  assert.equal(state.liveSpend.day, dayKey())
+  assert.ok(Math.abs(state.liveSpend.usd - 60) < 1e-9, 'intended spend booked to the daily cap (conservative)')
+  assert.ok(Math.abs(state.breaker.spentUsd - 60) < 1e-9, 'and to the lifetime spend')
+  assert.equal(state.bots[0].state.realHeldUntrusted, true, 'position flagged for chain reconcile')
+})
+
+test('P1-7: no journal → reconcile is a no-op', () => {
+  state.pendingBuys = []
+  state.liveSpend = { day: '', usd: 0 }
+  assert.equal(reconcilePendingBuys(), 0)
+  assert.equal(state.liveSpend.usd, 0)
 })
 
 test('P2-14: a reclaim is not double-counted when the scan already returned the cash', () => {

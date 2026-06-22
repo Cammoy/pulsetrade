@@ -17,7 +17,8 @@ const PRICES: Record<string, number> = { ethereum: 2000, chainlink: 10, tether: 
 const { state } = await import('../src/store.js')
 const { createBot, controlBot, __test } = await import('../src/engine.js')
 const { getSpotPrices, __test: pricesTest } = await import('../src/prices.js')
-const { settle, live, runExclusive, execBuy, reconcileRealHeld, curHeld } = __test
+const { networkById } = await import('../src/networks.js')
+const { settle, live, runExclusive, execBuy, reconcileRealHeld, curHeld, tickBot } = __test
 
 const realLive = { ...live }
 
@@ -95,6 +96,31 @@ test('P0-1: a live buy books the REAL on-chain qty + avg cost, not the quote est
   assert.equal(bot.realHeld, received.toString(), 'realHeld = the measured on-chain delta')
   const t = state.trades[state.trades.length - 1]
   assert.ok(Math.abs(t.qty - 4) < 1e-9 && Math.abs(t.priceUsd - 25) < 1e-6, 'trade records the real fill (qty 4 @ $25)')
+})
+
+test('P1-9: a sniper with a STALE pool price force-exits at the last-known price', async () => {
+  state.settings.mode = 'paper'
+  state.bots.length = 0
+  state.trades.length = 0
+  const gt = networkById('base')!.gt
+  const POOL = '0x' + '7'.repeat(40)
+  // Seed a cached pool price fetched 200s ago — past the 90s freshness ceiling → "stale".
+  pricesTest.setPool(gt, POOL, 5, Date.now() - 200_000)
+  const bot: any = {
+    id: 'snipe1', name: 'snipe', network: 'base', token: 'RUG', strategy: 'sniper', risk: 'aggressive',
+    budgetUsd: 100, cashUsd: 0, status: 'running',
+    schedule: { enabled: false, days: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 24 },
+    pool: { poolAddress: POOL, tokenAddress: '0x' + '8'.repeat(40), decimals: 18 },
+    sniper: { takeProfitPct: 50, stopLossPct: 25, maxHoldMin: 30 },
+    mode: 'paper',
+    position: { qty: 10, avgCostUsd: 6, costUsd: 60, openedAt: Date.now() },
+    state: {}, stats: { realizedUsd: 0, feesUsd: 0, wins: 0, losses: 0, nativeTakenQty: 0, nativeTakenUsd: 0 },
+    equityHistory: [], log: [], createdAt: Date.now(), lastTickAt: 0,
+  }
+  state.bots.push(bot)
+  await tickBot(bot)
+  assert.equal(bot.position.qty, 0, 'force-exited the position despite no fresh price')
+  assert.ok(state.trades.some((t) => t.botId === 'snipe1' && t.side === 'sell'), 'a protective sell was booked at the last-known price')
 })
 
 test('P1-2: a live buy books the REAL native outflow (input + gas) to the spend caps, not the intended USD', async () => {

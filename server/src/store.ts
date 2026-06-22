@@ -325,6 +325,11 @@ export interface State {
   // Manual holdings tracker — user-entered positions (cost basis + P/L), independent
   // of the bots and the on-chain wallet reader.
   tracker: TrackedAsset[]
+  // In-flight live BUY journal: an entry is written (and flushed) BEFORE the on-chain swap
+  // and removed after the fill is fully booked + flushed. A crash in that window leaves the
+  // entry behind; boot reconciles it (books the intended spend so the cap can't undercount,
+  // flags the bot for position reconcile) instead of silently losing a real spend. [P1-7]
+  pendingBuys?: { botId: string; network: string; token: string; usd: number; ts: number }[]
 }
 
 const empty: State = {
@@ -332,7 +337,7 @@ const empty: State = {
   tournaments: [], wallets: [], follows: [], settings: { mode: 'paper' },
   prefs: { watchlist: [] }, liveSpend: { day: '', usd: 0 },
   breaker: { tripped: false, reason: '', trippedAt: null, realizedUsd: 0, spentUsd: 0 },
-  vault: {}, withdrawals: [], swaps: [], tracker: [],
+  vault: {}, withdrawals: [], swaps: [], tracker: [], pendingBuys: [],
 }
 
 export function monthKey(ts: number): string {
@@ -431,6 +436,7 @@ function load(): State {
     }
     s.breaker.realizedUsd = Number.isFinite(s.breaker.realizedUsd) ? s.breaker.realizedUsd : 0
     s.breaker.spentUsd = Number.isFinite(s.breaker.spentUsd) ? s.breaker.spentUsd : 0
+    if (!Array.isArray(s.pendingBuys)) s.pendingBuys = [] // in-flight live-buy journal [P1-7]
     // Fail CLOSED to paper: a missing/garbled settings block (settings:null, {},
     // or an unknown mode) must never leave mode undefined — every consumer reads
     // settings.mode, and a live-or-undefined value here is the worst default.

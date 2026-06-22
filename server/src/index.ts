@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { state, flushNow, DATA_DIR } from './store.js'
 import { initTradeDb, backfillTrades } from './db.js'
-import { startEngine, stopEngine, disarmLiveBotsForBoot } from './engine.js'
+import { startEngine, stopEngine, disarmLiveBotsForBoot, reconcilePendingBuys } from './engine.js'
 import { liveReady } from './live.js'
 import { solanaLiveReady } from './live-solana.js'
 import { createApp, shouldDowngradeLiveOnBoot, liveArmedButNoToken, invalidCapEnv, tokenOk } from './app.js'
@@ -95,6 +95,11 @@ if (initTradeDb(DATA_DIR)) {
   const n = backfillTrades(state.trades)
   console.log(`[db] SQLite trade ledger ready — backfilled ${n} trade(s) from state.json`)
 }
+
+// Recover any in-flight live BUY journaled before a crash (book the spend conservatively so
+// the cap can't undercount; flag the position for reconcile). Before startEngine. [P1-7]
+const recovered = reconcilePendingBuys()
+if (recovered) console.warn(`[server] ⚠ reconciled ${recovered} in-flight live buy(s) from a prior crash — spend booked conservatively; re-arm + verify positions vs the wallet.`)
 
 // SAFE BOOT (must run BEFORE startEngine so no live tick fires first): never auto-resume
 // LIVE trading on a restart/crash. The persisted live WORKSPACE is downgraded to paper AND

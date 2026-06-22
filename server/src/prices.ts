@@ -38,6 +38,14 @@ export const spotStale = (): boolean => spotFetchedAt === 0 || Date.now() - spot
 export const __test = {
   expireSpot() { spotFetchedAt = 0 },
   freshenSpot() { spotFetchedAt = Date.now() },
+  /** Seed a pool price with a chosen fetch time (default now) so tests can simulate a
+   *  fresh OR stale cached pool price. (poolCache/poolFetchedAt are defined below; these
+   *  methods only run at test time, after module init.) */
+  setPool(gtSlug: string, poolAddress: string, price: number, fetchedAt: number = Date.now()) {
+    const key = `${gtSlug}:${poolAddress.toLowerCase()}`
+    poolCache.set(key, price)
+    poolFetchedAt.set(key, fetchedAt)
+  },
 }
 
 /** The spot price for ONE id, but only if THAT id was itself refreshed within the

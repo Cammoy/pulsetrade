@@ -12,7 +12,7 @@
 import { state, save, flushNow, uid, monthKey, dayKey, emptyMonth, type Bot, type Trade, type SniperConfig, type State, type Tournament, type Follow, type Withdrawal } from './store.js'
 import { recordTrade, tradeDbReady } from './db.js'
 import { networkById, tokenOf, allPriceIds, type Network } from './networks.js'
-import { getSpotPrices, getCandles, spot, spotFresh, poolPriceFresh, refreshPoolPrice, spotStale, poolLiquidityUsd } from './prices.js'
+import { getSpotPrices, getCandles, spot, spotFresh, poolPriceFresh, poolPrice, refreshPoolPrice, spotStale, poolLiquidityUsd } from './prices.js'
 import { strategyById, type Ctx, type Action } from './strategies.js'
 import { RISK, type RiskParams } from './risk.js'
 import { lamportsForUsd, baseUnitsForQty, SOL_MINT } from './live-solana.js'
@@ -501,6 +501,36 @@ function haltLive(bot: Bot, side: 'buy' | 'sell', error: string) {
   notifyAsync('bot-halted', `${bot.name} paused — live ${side} failed: ${error}`)
 }
 
+/** Remove an in-flight live-buy journal entry by reference. [P1-7] */
+function dropPendingBuy(p: NonNullable<State['pendingBuys']>[number]): void {
+  const i = state.pendingBuys?.indexOf(p) ?? -1
+  if (i >= 0) state.pendingBuys!.splice(i, 1)
+}
+
+/** Boot recovery for in-flight live buys (the journal). An entry here means we crashed
+ *  between broadcasting a live buy and booking it. We can't know without a chain read whether
+ *  it landed, so book the intended spend CONSERVATIVELY (over-counting the daily/lifetime cap
+ *  is the safe error — it only restricts FUTURE spend) so a confirmed-but-unflushed buy can't
+ *  undercount the cap, and flag the bot's position untrusted so the live-arm reconcile
+ *  re-derives it from chain. Bots are separately boot-disarmed, so none auto-re-buys. [P1-7] */
+export function reconcilePendingBuys(): number {
+  const pend = state.pendingBuys ?? []
+  if (!pend.length) return 0
+  const today = dayKey()
+  for (const p of pend) {
+    state.liveSpend = recordDailySpend(state.liveSpend, p.usd, today)
+    state.breaker.spentUsd += p.usd
+    const bot = state.bots.find((b) => b.id === p.botId)
+    if (bot) bot.state.realHeldUntrusted = true
+    console.warn(`[engine] reconciled in-flight live buy after restart — bot ${p.botId} ${p.token} $${p.usd}: spend booked conservatively, position flagged for reconcile`)
+  }
+  const n = pend.length
+  state.pendingBuys = []
+  tripBreakerIfNeeded()
+  flushNow()
+  return n
+}
+
 // ── Daily live-spend cap ─────────────────────────────────────────────────────
 // A safety bound on how much the bot may SPEND on live buys per day. Turnkey
 // Policies are stateless per-signature, so a cumulative daily cap is enforced
@@ -713,9 +743,15 @@ async function settle(bot: Bot, a: Action | null, price: number): Promise<void> 
         return
       }
       reservedLiveUsd += usd // reserve BEFORE the first await; released in finally
+      // Journal the in-flight buy (durably) BEFORE the swap: if we crash after the on-chain
+      // fill confirms but before the spend is booked, boot reconciles this entry rather than
+      // silently losing a real spend. Removed in the SAME persist as the booked spend below. [P1-7]
+      const pending = { botId: bot.id, network: bot.network, token: bot.token, usd, ts: Date.now() }
+      ;(state.pendingBuys ??= []).push(pending)
+      flushNow()
       try {
         const r = await mirrorLive(bot, 'buy', usd, 0, price)
-        if (!r.ok) return haltLive(bot, 'buy', r.error) // on-chain failed → do NOT commit the paper buy
+        if (!r.ok) { dropPendingBuy(pending); flushNow(); return haltLive(bot, 'buy', r.error) } // no fill → clear the journal
         if (r.delta && r.delta.baseUnits > 0n) {
           realQty = Number(r.delta.baseUnits) / 10 ** r.delta.decimals // ACTUAL tokens received
         } else if (r.delta) {
@@ -733,6 +769,7 @@ async function settle(bot: Bot, a: Action | null, price: number): Promise<void> 
         state.liveSpend = recordDailySpend(state.liveSpend, spent, today) // count the confirmed spend
         state.breaker.spentUsd += spent
         tripBreakerIfNeeded()
+        dropPendingBuy(pending) // clear the journal in the SAME persist as the booked spend → boot can't double-count [P1-7]
         // Persist the spend accounting the INSTANT it's booked (atomic write). The
         // live-spend cap is safety-critical and — unlike a position, which boot
         // reconciles from the chain — can't be rebuilt, so it must be durable before
@@ -806,7 +843,21 @@ async function tickBot(bot: Bot) {
   if (!strat || !params) return
 
   const price = priceForBot(bot)
-  if (!price) return
+  if (!price) {
+    // A SNIPER holding a position whose pool price has gone STALE may be mid-rug — don't
+    // just skip the tick (riding an unpriced position); attempt an immediate protective exit
+    // at the last-known pool price. In live mode the on-chain sell executes regardless of our
+    // cached price; in paper it books at the last known. [P1-9]
+    if (bot.sniper && bot.position.qty > 0) {
+      const net = networkById(bot.network)
+      const last = net && bot.pool ? poolPrice(net.gt, bot.pool.poolAddress) : undefined
+      if (last && last > 0) {
+        await settle(bot, { type: 'sell', fraction: 1, reason: 'Pool price stale — protective exit', exit: true }, last)
+        bot.lastTickAt = Date.now()
+      }
+    }
+    return
+  }
 
   // Sniper bots are priced from their pool and need no candle history; all
   // other strategies need 30d of hourly closes for their indicators.
@@ -826,6 +877,16 @@ async function tickBot(bot: Bot) {
       const sltp = slTpFallback(bot, price, params)
       if (sltp) { await settle(bot, sltp, price); bot.lastTickAt = Date.now() }
       return
+    }
+    // Closed-bar ENTRY gate: when flat, only consider a NEW entry once per closed hourly bar
+    // — not on every 20s intra-bar print, which re-runs hourly-calibrated indicators against a
+    // noisy/stale spot and inflates trade count & cost vs the backtest. Exits/position
+    // management still run every tick (the gate is skipped while holding). Snipers are exempt
+    // (pool-priced; they need instant entry + fast exits). [P2-6]
+    if (bot.position.qty === 0) {
+      const barT = candles[candles.length - 1].t
+      if (bot.state.lastBarT === barT) return // already evaluated an entry for this bar
+      bot.state.lastBarT = barT
     }
     closes = candles.map((c) => c.c)
     closes.push(price)
@@ -958,12 +1019,15 @@ export function serializeBot(bot: Bot) {
   }
 }
 
-let ticking = false
+// One shared mutex for the main tick AND the fast sniper poll, so they never overlap and
+// can't double-settle the same bot (single-threaded checks: the flag is read/set
+// synchronously at entry, before any await). [P1-9 / P1-14]
+let engineBusy = false
 let draining = false // set by stopEngine() so no new tick or scan starts during shutdown
 let lastGlobalTickAt = 0 // completion time of the last SUCCESSFUL tick — the dead-man heartbeat [P1-14]
 async function tick() {
-  if (ticking || draining) return // never overlap ticks; never start a new one while draining
-  ticking = true
+  if (engineBusy || draining) return // never overlap ticks; never start a new one while draining
+  engineBusy = true
   try {
     // Static universe + any CoinGecko ids carried by market bots + the
     // mainnet majors used to value smart-money wallet holdings.
@@ -1026,7 +1090,31 @@ async function tick() {
   } catch (e) {
     console.error('[engine] tick failed', e)
   } finally {
-    ticking = false
+    engineBusy = false
+  }
+}
+
+// Fast SNIPER poll: snipers trade the most volatile, rug-prone tokens, where a 20s tick is
+// far too slow to catch a collapse. This refreshes ONLY active sniper pools and re-evaluates
+// ONLY sniper bots, every few seconds, so SL/TP/trailing react in ~SNIPER_POLL_MS instead of
+// the global cadence. Shares engineBusy with tick() so the two never run concurrently. [P1-9]
+async function sniperPoll() {
+  if (engineBusy || draining) return
+  const snipers = state.bots.filter((b) => b.pool && (b.status === 'running' || b.status === 'scheduled'))
+  if (!snipers.length) return
+  engineBusy = true
+  try {
+    const pools = new Map<string, { gt: string; addr: string }>()
+    for (const b of snipers) {
+      const net = networkById(b.network)
+      if (net && b.pool) pools.set(`${net.gt}:${b.pool.poolAddress}`, { gt: net.gt, addr: b.pool.poolAddress })
+    }
+    await Promise.all([...pools.values()].map((p) => refreshPoolPrice(p.gt, p.addr)))
+    await Promise.all(snipers.map((b) => tickBot(b).catch((e) => console.error(`[engine] sniper poll ${b.name}:`, e))))
+  } catch (e) {
+    console.error('[engine] sniper poll failed', e)
+  } finally {
+    engineBusy = false
   }
 }
 
@@ -1056,8 +1144,10 @@ export function disarmLiveBotsForBoot(): number {
   return paused
 }
 
+const SNIPER_POLL_MS = 3_000 // fast exit checks for the volatile pools snipers trade [P1-9]
 let engineTimer: ReturnType<typeof setInterval> | null = null
 let watchdogTimer: ReturnType<typeof setInterval> | null = null
+let sniperTimer: ReturnType<typeof setInterval> | null = null
 let stallAlerted = false
 
 export function startEngine(b: Broadcast) {
@@ -1087,7 +1177,10 @@ export function startEngine(b: Broadcast) {
     }
   }, TICK_MS)
   watchdogTimer.unref?.()
-  console.log(`[engine] running — ${state.bots.length} bot(s) loaded, tick every ${TICK_MS / 1000}s`)
+  // Fast sniper exit poll (decoupled from the 20s global tick); shares engineBusy with tick(). [P1-9]
+  sniperTimer = setInterval(() => void sniperPoll(), SNIPER_POLL_MS)
+  sniperTimer.unref?.()
+  console.log(`[engine] running — ${state.bots.length} bot(s) loaded, tick every ${TICK_MS / 1000}s, sniper poll ${SNIPER_POLL_MS / 1000}s`)
 }
 
 /** Graceful drain for shutdown: stop scheduling ticks, then await any in-flight swap/
@@ -1097,6 +1190,7 @@ export async function stopEngine(timeoutMs = 25_000): Promise<void> {
   draining = true
   if (engineTimer) { clearInterval(engineTimer); engineTimer = null }
   if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null }
+  if (sniperTimer) { clearInterval(sniperTimer); sniperTimer = null }
   await Promise.race([drainLanes(), new Promise<void>((resolve) => setTimeout(resolve, timeoutMs).unref?.())])
 }
 
@@ -1170,6 +1264,15 @@ export function createBot(input: {
   if (input.strategy === 'dca') {
     const slices = RISK[input.risk]?.dcaSlices ?? 1
     if (budget / slices <= 1) return { error: `Smart DCA needs a bigger budget — each of its ${slices} slices would be $1 or less (dust). Use at least $${slices + 1}.` }
+  }
+  // Minimum-economic-trade guard: each trade must clear the round-trip cost (gas in + out +
+  // the first-sell approval) by a wide margin (≥20×), or fees alone bleed the bot. Paper
+  // market bots (no real gas) are exempt. [P2-7]
+  if (!isMarket && net.avgGasUsd > 0) {
+    const roundTripGas = 2.5 * net.avgGasUsd
+    const perTrade = input.strategy === 'dca' ? budget / (RISK[input.risk].dcaSlices ?? 1) : (budget * RISK[input.risk].positionPct) / 100
+    if (perTrade < 20 * roundTripGas)
+      return { error: `Each trade (~$${perTrade.toFixed(2)}) is too small to beat ~$${roundTripGas.toFixed(2)} round-trip gas on ${net.name} — raise the budget so trades clear ~$${(20 * roundTripGas).toFixed(0)}.` }
   }
   const sched = input.schedule
   if (sched?.enabled) {

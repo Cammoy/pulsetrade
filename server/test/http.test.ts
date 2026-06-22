@@ -16,7 +16,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-http-')
 for (const k of ['ZEROX_API_KEY', 'BOT_WALLET_KEY', 'SOLANA_WALLET_KEY', 'TURNKEY_API_PUBLIC_KEY', 'TURNKEY_API_PRIVATE_KEY', 'TURNKEY_ORGANIZATION_ID', 'TURNKEY_EVM_ADDRESS', 'TURNKEY_SOLANA_ADDRESS'])
   delete process.env[k]
 
-const { createApp, tokenOk, shouldDowngradeLiveOnBoot, liveArmedButNoToken, invalidCapEnv } = await import('../src/app.js')
+const { createApp, tokenOk, shouldDowngradeLiveOnBoot, liveArmedButNoToken, invalidCapEnv, missingDedicatedRpc } = await import('../src/app.js')
 
 const TOKEN = 'secret-token-abcdefghijklmnop'
 let authedSrv: Server, openSrv: Server
@@ -187,6 +187,14 @@ test('P2-12: invalidCapEnv rejects a malformed safety-cap env, accepts unset/val
   assert.equal(invalidCapEnv({ MAX_LIVE_USD_PER_DAY: '50', MAX_LIVE_USD_TOTAL: '150' }), null, 'valid numbers → ok')
   assert.match(invalidCapEnv({ MAX_LIVE_USD_PER_DAY: 'abc' }) ?? '', /MAX_LIVE_USD_PER_DAY/, 'NaN → rejected (would silently parse to 0 = unlimited)')
   assert.match(invalidCapEnv({ MAX_LIVE_USD_TOTAL: '-5' }) ?? '', /MAX_LIVE_USD_TOTAL/, 'negative → rejected')
+})
+
+test('P2-11: missingDedicatedRpc warns only for a READY chain whose RPC is unset', () => {
+  assert.deepEqual(missingDedicatedRpc(false, false, {}), [], 'nothing ready → no warnings')
+  assert.equal(missingDedicatedRpc(true, false, {}).length, 1, 'EVM ready, no EVM RPC → warn')
+  assert.equal(missingDedicatedRpc(true, false, { EVM_RPC_URL_8453: 'https://x' }).length, 0, 'EVM RPC set → ok')
+  assert.equal(missingDedicatedRpc(false, true, {}).length, 1, 'Solana ready, no SOLANA_RPC_URL → warn')
+  assert.equal(missingDedicatedRpc(false, true, { SOLANA_RPC_URL: 'https://x' }).length, 0, 'Solana RPC set → ok')
 })
 
 test('tokenOk: matches the exact token, rejects everything else in constant time', () => {

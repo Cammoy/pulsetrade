@@ -77,6 +77,19 @@ export function invalidCapEnv(env: NodeJS.ProcessEnv = process.env): string | nu
   return null
 }
 
+/** Warnings when live is armed but no DEDICATED RPC is configured for a ready chain: public
+ *  RPCs rate-limit and serve stale state under 24/7 load (feeding stale balances into the
+ *  sell-clamp). EVM RPC is per-chain (EVM_RPC_URL_<chainId>); Solana is SOLANA_RPC_URL.
+ *  Advisory by default; REQUIRE_DEDICATED_RPC=true turns these into a hard arm-time block. [P2-11] */
+export function missingDedicatedRpc(evmReady: boolean, solReady: boolean, env: NodeJS.ProcessEnv = process.env): string[] {
+  const out: string[] = []
+  if (evmReady && !Object.keys(env).some((k) => /^EVM_RPC_URL_\d+$/.test(k) && env[k]))
+    out.push('No dedicated EVM RPC (EVM_RPC_URL_<chainId>) — live EVM trading will use rate-limited public nodes.')
+  if (solReady && !env.SOLANA_RPC_URL)
+    out.push('No SOLANA_RPC_URL — live Solana trading will use the throttled public mainnet-beta.')
+  return out
+}
+
 /**
  * Build the Express app. `engineToken` gates every mutating request; when it is
  * undefined auth is disabled (local dev) — the bootstrap separately refuses to
@@ -632,6 +645,15 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
     // unbounded daily cap lets a losing/runaway session drain the wallet). [P2-10]
     if (mode === 'live' && maxLiveUsdPerDay() <= 0)
       return res.status(400).json({ error: 'Set MAX_LIVE_USD_PER_DAY (a daily live-spend cap, e.g. 50) in server/.env before going live — live mode is fail-closed without a per-day spend bound.' })
+    // Dedicated-RPC check: advisory by default, hard block under REQUIRE_DEDICATED_RPC. [P2-11]
+    if (mode === 'live') {
+      const rpcWarn = missingDedicatedRpc(liveReady(), solanaLiveReady())
+      if (rpcWarn.length) {
+        if (process.env.REQUIRE_DEDICATED_RPC === 'true')
+          return res.status(400).json({ error: `Live blocked (REQUIRE_DEDICATED_RPC): ${rpcWarn.join(' ')}` })
+        for (const w of rpcWarn) console.warn(`[server] ⚠ ${w}`)
+      }
+    }
     const wasPaper = state.settings.mode !== 'live'
     state.settings.mode = mode
     flushNow() // arming/disarming live trading must survive a crash immediately

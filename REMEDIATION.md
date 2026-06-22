@@ -24,15 +24,15 @@ Tests: `cd server && node --import tsx --test test/*.test.ts` (needs Node ≥22.
 - ✅ P1-4 Bounded approvals (exact amount) + 0x AllowanceHolder allowlist + `to===spender`. Minor: no stale-allowance reset-to-0 (low risk with exact + transient AllowanceHolder)
 - ✅ P1-5 Per-token concentration cap (opt-in) in settle/createBot/createSniper. Minor: runtime check not reserved across concurrent same-tick buys (create-time + daily/lifetime caps backstop)
 - ✅ P1-6 Confirmed buy with failed after-read books spend + flags untrusted
-- 🟡 P1-7 Re-buy closed via boot-disarm; no flush-in-mirrorLive / no pending-buy journal
+- ✅ P1-7 In-flight live-buy journal (`state.pendingBuys`) + boot `reconcilePendingBuys()`; re-buy already closed via boot-disarm
 - 🟡 P1-8 Price-impact abort + raised cost; no per-pool slippage scaling / no explicit slippageBps from engine
-- 🟡 P1-9 Pool prices timestamped; no stale→exit trigger, no tight sniper poll
+- ✅ P1-9 Sniper stale-pool→protective-exit + decoupled 3s sniper poll (`sniperPoll`)
 - ✅ P1-10 Honest copy ("Adapts to the regime, defends capital"; "capital-preserving default, not a profit guarantee" in strategies.ts + App.tsx) + fast drawdown-from-peak crash exit added to the adaptive strategy
 - ✅ P1-11 Profit Finder OOS-ranked + survivorship labels
 - ✅ P1-12 Graceful drain on SIGTERM/SIGINT (`index.ts` → `stopEngine` awaits in-flight lanes via `drainLanes`); removed `store.ts`'s synchronous `process.exit(0)`
 - 🟡 P1-13 `.nvmrc` added; launcher doesn't read it / falls back to ambient Node; no supervisor; `tradeDbReady()` not surfaced
 - ✅ P1-14 `GET /health` (tick age, mode, bot counts, spend vs cap, breaker, provider heartbeats, db) + env-gated webhook/Telegram notifier on halt/breaker/stall/untrusted-ledger/start/shutdown (`health.ts`)
-- 🟡 P1-15 Receipt timeouts 90s; still re-approves every sell (no allowance read)
+- ✅ P1-15 Bounded approvals (P1-4) + explicit receipt timeouts; allowance-skip obviated (exact-amount approval consumed each sell by design)
 
 ## P2 — lower urgency
 Done: ✅ P2-3 (WS upgrade auth + `:address`/`:cg` param validation), ✅ P2-4 (flushNow on live
@@ -42,10 +42,10 @@ control-plane writes), ✅ P2-5 (candle-free protective SL/TP), ✅ P2-8 (DCA 50
 (autopilot Stop/Delete race + delete budget reclaim), ✅ P2-15 (strict-win counting + on-chain
 sniper decimals when live), ✅ P2-2 (cross-origin mutations rejected server-side), ✅ P2-13
 (launcher reads `.nvmrc` + exits non-zero on no modern Node; `tradeDbReady` already on /health).
-P2-7 approve-gas leg landed with P0-9 (min-economic-trade guard open).
-Still open: P2-1 (MEV/private-RPC — needs real endpoints), P2-6 (closed-bar eval — behavior
-change), P2-11 (fail-fast if dedicated RPC unset — debatable; public RPCs work), P2-7
-(min-economic-trade guard — low value on cheap L2s).
+✅ P2-6 (closed-bar entry gate; exits still every tick), ✅ P2-7 (min-economic-trade guard in
+createBot), ✅ P2-11 (dedicated-RPC advisory at arm + REQUIRE_DEDICATED_RPC opt-in block),
+✅ P2-1 (protected-relay supported via EVM_RPC_URL; modeled MEV cost in backtest — Jito bundles
+documented as a remaining infra item). ALL P2 addressed.
 
 ---
 
@@ -157,14 +157,29 @@ Tests: `p2-tail.test.ts` (fallback SL/TP, DCA filter, delete reclaim).
   the durable ledger. (`tradeDbReady` is already surfaced on `/health` via engineHealth.)
 Tests: `http.test.ts` (cross-origin 403, same-origin/origin-less pass).
 
-### Remaining (deliberate calls — not done)
-- **P2-1** MEV/private-RPC + Jito: needs real protected endpoints; can't implement/test
-  without infra. Operational config, not a code change.
-- **P2-6** closed-bar evaluation: changes live trade cadence broadly; behavior-risky, would
-  churn many tests — do deliberately if desired.
-- **P2-11** fail-fast if dedicated RPC unset when live: debatable (public RPCs work, just
-  rate-limited) — left as a non-blocking gap rather than forcing paid RPC.
-- **P2-7** min-economic-trade guard: low value on cheap L2s (gas is cents; the $10 budget
-  floor already covers it) — skipped to avoid false rejections.
-Partials: P1-7 (pending-buy journal), P1-9 (stale→exit + tight sniper poll), P1-15 (allowance
-read). Plus the minor notes on P0-4/P0-5/P0-8 in the P0 list above.
+## Session 8 — final P2 tail + P1 partials ✅ DONE
+496 server tests pass (+12), web 74, both tsc clean.
+- **P2-7** min-economic-trade guard in `createBot` (each trade must clear ≥20× round-trip gas).
+- **P2-11** dedicated-RPC check at arm (`missingDedicatedRpc`): advisory warning by default,
+  hard block under `REQUIRE_DEDICATED_RPC=true`.
+- **P1-9** sniper stale-pool→protective-exit in `tickBot` + a fast 3s sniper poll
+  (`sniperPoll`, shares `engineBusy` with the main tick so they never overlap).
+- **P2-6** closed-bar ENTRY gate (`bot.state.lastBarT`) — entries once per closed hourly bar,
+  exits/management every tick, snipers exempt.
+- **P1-7** in-flight live-buy journal (`state.pendingBuys`): written+flushed before the swap,
+  dropped in the same persist as the booked spend; `reconcilePendingBuys()` recovers it on
+  boot (books the spend conservatively, flags the position) — wired before startEngine.
+- **P2-1** protected-relay MEV path documented (point `EVM_RPC_URL_*` at Flashbots Protect /
+  MEV Blocker; the engine sends through it — no code change). Modeled MEV cost already in the
+  backtest; **Jito bundle submission remains an infra item (not coded — needs a Jito endpoint
+  + real mempool to verify; documented honestly).**
+- **P1-15** addressed by P1-4: approvals are bounded (exact amount), receipt waits are explicit
+  (90s); the "read allowance to skip re-approval" optimization is OBVIATED — an exact-amount
+  approval is consumed each sell by design, so there's nothing to skip.
+Tests: `p2-tail.test.ts` (+P1-7 reconcile), `p2-closed-bar.test.ts` (P2-6), `live-mirror.test.ts`
+(P1-9 stale exit), `http.test.ts` (P2-11).
+
+### Honest remaining gaps (not blockers)
+- **P2-1 Jito bundles**: operational/infra — protected EVM relay is supported & documented.
+- Minor sub-notes on P0-4/P0-5/P0-8 in the P0 list above (boot env-coherence test, per-trade
+  max-USD env, 30–60s vs 90s receipt waits) — each documented, none money-unsafe.
