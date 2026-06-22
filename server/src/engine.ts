@@ -14,7 +14,7 @@ import { recordTrade, tradeDbReady } from './db.js'
 import { networkById, tokenOf, allPriceIds, type Network } from './networks.js'
 import { getSpotPrices, getCandles, spot, spotFresh, poolPriceFresh, refreshPoolPrice, spotStale, poolLiquidityUsd } from './prices.js'
 import { strategyById, type Ctx, type Action } from './strategies.js'
-import { RISK } from './risk.js'
+import { RISK, type RiskParams } from './risk.js'
 import { lamportsForUsd, baseUnitsForQty, SOL_MINT } from './live-solana.js'
 import { screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
@@ -775,6 +775,18 @@ async function settle(bot: Bot, a: Action | null, price: number): Promise<void> 
   }
 }
 
+/** Candle-free protective exit: a catastrophic stop-loss / hard take-profit evaluated on
+ *  the live SPOT price + cost basis alone. Runs when candle history is unavailable (a
+ *  CoinGecko outage/rate-limit) so a held position's stop-loss is never silently suspended
+ *  while the indicator path is gated out. Returns a sell Action, or null. [P2-5] */
+function slTpFallback(bot: Bot, price: number, params: RiskParams): Action | null {
+  if (bot.position.qty <= 0 || !(bot.position.avgCostUsd > 0)) return null
+  const chg = ((price - bot.position.avgCostUsd) / bot.position.avgCostUsd) * 100
+  if (chg <= -params.stopLossPct) return { type: 'sell', fraction: 1, reason: `Stop-loss ${chg.toFixed(2)}% — protective exit (candle data unavailable)`, exit: true }
+  if (chg >= params.takeProfitPct) return { type: 'sell', fraction: 1, reason: `Take-profit +${chg.toFixed(2)}% — (candle data unavailable)`, exit: true }
+  return null
+}
+
 async function tickBot(bot: Bot) {
   if (bot.status === 'stopped' || bot.status === 'paused') return
   const scheduled = !inSchedule(bot)
@@ -806,7 +818,15 @@ async function tickBot(bot: Bot) {
     const cg = bot.cg ?? tokenOf(bot.network, bot.token)?.cg
     if (!cg) return
     const candles = await getCandles(cg, 30)
-    if (candles.length < 30) return
+    if (candles.length < 30) {
+      // Candle data unavailable (provider outage / rate-limit). Don't open new exposure —
+      // indicators can't be computed — but a HELD position must still be protected, so run
+      // a candle-free SL/TP against the live spot price rather than silently suspending the
+      // stop-loss until data returns. [P2-5]
+      const sltp = slTpFallback(bot, price, params)
+      if (sltp) { await settle(bot, sltp, price); bot.lastTickAt = Date.now() }
+      return
+    }
     closes = candles.map((c) => c.c)
     closes.push(price)
     // AI bots act on a shared, periodically-refreshed Gemini signal (non-blocking).
@@ -1187,7 +1207,8 @@ export function createBot(input: {
   }
   log(bot, `Bot launched — $${budget} budget, ${RISK[input.risk].label} risk, ${bot.mode} mode`)
   state.bots.push(bot)
-  save()
+  if (bot.mode === 'live') flushNow() // a just-armed live bot must survive a crash immediately [P2-4]
+  else save()
   return bot
 }
 
@@ -1307,7 +1328,8 @@ export async function createSniper(input: {
   }
   log(bot, `Sniper armed on ${input.tokenSymbol} — $${budget}, TP +${s.takeProfitPct}% / SL −${s.stopLossPct}% / max ${s.maxHoldMin}m. Safety score ${report.score}/100.`)
   state.bots.push(bot)
-  save()
+  if (bot.mode === 'live') flushNow() // a just-armed live snipe + its pool decrement must be durable now [P2-4]
+  else save()
   return bot as Bot & { riskReport: unknown }
 }
 
@@ -1366,6 +1388,11 @@ export async function autoScan(now = Date.now()): Promise<void> {
   if (a.mode !== 'new') a.mode = 'new'
   const { pools } = await discoverSafePools(a.network, a.mode, now, { minLiquidityUsd: a.minLiquidityUsd, maxAgeMinutes })
   for (const p of pools) {
+    // Re-read live state before each spawn: a Stop (a.enabled=false) or a fill on another
+    // lane can land across the createSniper await, and the pre-loop checks are now stale —
+    // without this, snipes keep firing after the user pressed Stop / past the caps. [P2-14]
+    if (!a.enabled) break
+    if (state.bots.filter((b) => b.auto && b.status !== 'stopped').length >= a.maxConcurrent || a.poolUsd < a.perSnipeUsd) break
     const key = p.tokenAddress.toLowerCase()
     if (a.tried.includes(key)) continue
     a.tried.push(key)
@@ -1388,6 +1415,7 @@ export async function autoScan(now = Date.now()): Promise<void> {
       a.poolUsd -= a.perSnipeUsd
       a.lastEntryAt = now // one best coin per cadence
       a.openedCount = (a.openedCount ?? 0) + 1
+      if (out.mode === 'live') flushNow() // a live snipe's pool decrement must be durable now [P2-4]
       // Campaign fully deployed → the SCAN is done. Stop scanning (the budget is all
       // committed); the open runners keep riding to their own exits as normal bots.
       const target = a.targetSnipes && a.targetSnipes > 0 ? a.targetSnipes : Math.max(1, Math.floor(a.totalBudgetUsd / a.perSnipeUsd))
@@ -1550,6 +1578,7 @@ export async function followScan(now = Date.now()): Promise<void> {
     if (active >= f.maxConcurrent || f.poolUsd < f.perTradeUsd) continue
 
     const buys = await walletRecentBuys(f.walletAddress, f.startedAt).catch(() => [])
+    if (!f.enabled) continue // stopped during the fetch — open no new mirrors [P2-14]
     for (const e of buys) {
       if (active >= f.maxConcurrent || f.poolUsd < f.perTradeUsd) break
       if (f.seenTx.includes(e.txHash)) continue
@@ -1572,6 +1601,7 @@ export async function followScan(now = Date.now()): Promise<void> {
       if (!('error' in out)) {
         f.poolUsd -= f.perTradeUsd
         active++
+        if (out.mode === 'live') flushNow() // durable live pool decrement [P2-4]
       }
     }
   }
@@ -1970,6 +2000,17 @@ export function deleteBot(id: string): boolean {
   // realHeld-sums-to-aggregate invariant.
   if (bot.mode === 'live' && curHeld(bot) > 0n)
     console.warn(`[engine] deleting bot ${bot.id} (${bot.name}) with realHeld=${bot.realHeld} — ${curHeld(bot)} base units orphaned in the shared wallet; reconcile/sweep manually`)
+  // Return a deleted spawn's working cash to its pool so deleting an active auto-snipe /
+  // follow-mirror doesn't permanently leak that budget out of the campaign. The reclaim
+  // flags also keep the autoScan/followScan "money comes home" pass from double-counting. [P2-14]
+  if (bot.auto && state.autoSniper && !bot.state.reclaimedByAuto) {
+    bot.state.reclaimedByAuto = true
+    state.autoSniper.poolUsd += bot.cashUsd
+  }
+  if (bot.followId && !bot.state.reclaimedByFollow) {
+    const f = state.follows.find((x) => x.id === bot.followId)
+    if (f) { bot.state.reclaimedByFollow = true; f.poolUsd += bot.cashUsd }
+  }
   state.bots.splice(i, 1)
   state.trades = state.trades.filter((t) => t.botId !== id)
   fleetPeak = 0 // removing a bot shrinks fleet equity — re-baseline the drawdown high-water so a deletion can't spuriously trip the cap
@@ -1983,4 +2024,4 @@ export function trimTrades() {
 
 /** Internal hooks for the test suite only. `live` is the injectable executor
  *  seam — tests override its methods to exercise live reconciliation offline. */
-export const __test = { execBuy, execSell, tickBot, settle, mirrorLive, live, runExclusive, reconcileRealHeld, curHeld, checkFleetDrawdown, creditVault, vaultBalance }
+export const __test = { execBuy, execSell, tickBot, settle, mirrorLive, live, runExclusive, reconcileRealHeld, curHeld, checkFleetDrawdown, creditVault, vaultBalance, slTpFallback }

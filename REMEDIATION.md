@@ -35,13 +35,14 @@ Tests: `cd server && node --import tsx --test test/*.test.ts` (needs Node ≥22.
 - 🟡 P1-15 Receipt timeouts 90s; still re-approves every sell (no allowance read)
 
 ## P2 — lower urgency
-Done: ✅ P2-3 (WS upgrade auth + `:address`/`:cg` param validation), ✅ P2-9 (manual-snipe
-pool-liquidity floor + budget-vs-liquidity cap), ✅ P2-10 (daily-cap fail-closed at arm),
-✅ P2-12 (boot rejects malformed cap envs), ✅ P2-15 (strict-win counting + on-chain sniper
-decimals when live). P2-7 approve-gas leg landed with P0-9 (min-economic-trade guard still open).
-Still open: P2-1 MEV, P2-2 CORS server-side reject, P2-4 flushNow on control-plane, P2-5 SL/TP
-hoist, P2-6 closed-bar eval, P2-8 DCA trend filter, P2-11 fail-fast-if-RPC-unset, P2-13 nvm
-`.nvmrc`/exit, P2-14 autopilot Stop/Delete race + budget leak, P2-7 min-economic-trade guard.
+Done: ✅ P2-3 (WS upgrade auth + `:address`/`:cg` param validation), ✅ P2-4 (flushNow on live
+control-plane writes), ✅ P2-5 (candle-free protective SL/TP), ✅ P2-8 (DCA 50h downtrend filter
++ tighter capitulation), ✅ P2-9 (manual-snipe pool-liquidity floor + budget-vs-liquidity cap),
+✅ P2-10 (daily-cap fail-closed at arm), ✅ P2-12 (boot rejects malformed cap envs), ✅ P2-14
+(autopilot Stop/Delete race + delete budget reclaim), ✅ P2-15 (strict-win counting + on-chain
+sniper decimals when live). P2-7 approve-gas leg landed with P0-9 (min-economic-trade guard open).
+Still open: P2-1 MEV, P2-2 CORS server-side reject, P2-6 closed-bar eval, P2-11 fail-fast-if-RPC-
+unset, P2-13 nvm `.nvmrc`/exit, P2-7 min-economic-trade guard.
 
 ---
 
@@ -130,9 +131,21 @@ Honest cost model. 478 server tests pass (+3 net), web 74, both tsc clean.
 Tests: `create-sniper.test.ts` (liquidity floor/budget/unknown), `http.test.ts` (param
 validation + `invalidCapEnv`), plus the dust-win behaviour exercised via the engine suites.
 
+## Session 6 — P2 tail: correctness + durability ✅ DONE
+489 server tests pass (+6), tsc clean.
+- **P2-5** `slTpFallback` (engine.ts) runs a candle-free stop-loss/take-profit on the live
+  spot price when candle data is unavailable, hoisted into `tickBot`'s outage gate.
+- **P2-8** DCA gets a 50h downtrend filter (skip new slices >8% below the 50h mean) and a
+  tighter capitulation stop (2× from 2.5×) — no more martingale into a dying token.
+- **P2-14** `autoScan`/`followScan` re-read `enabled` (+ caps) across the spawn awaits so a
+  Stop mid-scan halts further snipes/mirrors; `deleteBot` reclaims a running spawn's cash to
+  its auto/follow pool (reclaim-flag guarded against double-count).
+- **P2-4** live `createBot`/`createSniper` + the autopilot pool decrements `flushNow()` so a
+  just-armed live position survives a crash in the debounce window.
+Tests: `p2-tail.test.ts` (fallback SL/TP, DCA filter, delete reclaim).
+
 ### Remaining (smaller / lower-priority)
-P2-1 MEV protection, P2-2 CORS server-side reject, P2-4 flushNow on control-plane writes,
-P2-5 SL/TP-above-candle-gate, P2-6 closed-bar eval, P2-8 DCA downtrend filter, P2-11/P2-13
-RPC/nvm fail-fast, P2-14 autopilot Stop/Delete race + budget reclaim, P2-7 min-economic-trade
-guard. Partials P1-7 (pending-buy journal), P1-9 (stale→exit + tight sniper poll), P1-15
-(allowance read). Plus the minor notes on P0-4/P0-5/P0-8 in the P0 list above.
+P2-1 MEV protection (private/Jito RPC — needs real endpoints), P2-2 CORS server-side reject,
+P2-6 closed-bar evaluation, P2-11/P2-13 RPC/nvm fail-fast, P2-7 min-economic-trade guard.
+Partials P1-7 (pending-buy journal), P1-9 (stale→exit + tight sniper poll), P1-15 (allowance
+read). Plus the minor notes on P0-4/P0-5/P0-8 in the P0 list above.

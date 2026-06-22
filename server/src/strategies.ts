@@ -183,13 +183,20 @@ const dca: Strategy = {
       const chg = pctFrom(ctx.price, ctx.position.avgCostUsd)
       if (chg >= ctx.params.takeProfitPct)
         return { type: 'sell', fraction: 1, reason: `Stack up +${chg.toFixed(2)}% on avg cost — take profit`, exit: true }
-      if (chg <= -ctx.params.stopLossPct * 2.5)
+      // Capitulation stop, tightened to 2× (was 2.5×): DCA averages DOWN, so its stop must
+      // not sit so far below cost that it rides a dying token most of the way to zero. [P2-8]
+      if (chg <= -ctx.params.stopLossPct * 2)
         return { type: 'sell', fraction: 1, reason: `Deep drawdown ${chg.toFixed(2)}% — capitulation stop`, exit: true }
     }
     const due = !s.lastBuyAt || ctx.now - s.lastBuyAt >= ctx.params.dcaIntervalMin * 60_000
     if (!due) return null
     const avg24 = sma(ctx.closes, 24)
     if (Number.isNaN(avg24) || ctx.price >= avg24) return null
+    // Downtrend filter: buy DIPS, never average down into a CONFIRMED downtrend. Without a
+    // long-MA gate, "below the 24h average" keeps buying all the way to zero (martingale into
+    // a dying token). Mirror meanrev/adaptive: skip new slices when well below the 50h mean. [P2-8]
+    const avg50 = sma(ctx.closes, 50)
+    if (!Number.isNaN(avg50) && pctFrom(ctx.price, avg50) < -8) return null
     const sliceUsd = ctx.budgetUsd / ctx.params.dcaSlices
     const buyUsd = Math.min(sliceUsd, ctx.cashUsd)
     // The engine drops buys of $1 or less as dust. Do NOT advance the DCA clock for
