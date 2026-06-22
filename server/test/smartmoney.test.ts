@@ -209,6 +209,24 @@ test('consensusHoldings: 2+ whales, but EXCLUDES majors/stables + stale + single
   assert.equal(aero.wallets[0].usd, 9000, 'largest holder listed first')
 })
 
+const { isDeadToken, MIN_LIVE_LIQUIDITY_USD } = await import('../src/smartmoney.js')
+
+test('isDeadToken: drops stale (no trades for months) OR confirmed near-zero liquidity; keeps unknown', () => {
+  const NOW = 1_800_000_000_000
+  // no activity in >90 days → dead (the dexscreener-style rug: liquidity pulled, trading stopped)
+  assert.equal(isDeadToken({ lastTs: NOW - 200 * 86_400_000, liquidityUsd: 50_000 }, NOW), true)
+  // recently active but a CONFIRMED near-zero DEX pool (liquidity removed) → dead
+  assert.equal(isDeadToken({ lastTs: NOW, liquidityUsd: 100 }, NOW), true)
+  // recent + healthy liquidity → alive
+  assert.equal(isDeadToken({ lastTs: NOW, liquidityUsd: 50_000 }, NOW), false)
+  // unknown liquidity (null, e.g. fetch failed / not indexed) is NEVER a reason to drop
+  assert.equal(isDeadToken({ lastTs: NOW, liquidityUsd: null }, NOW), false)
+  // omitting lastTs skips the staleness leg (consensus rows, already recency-filtered upstream)
+  assert.equal(isDeadToken({ liquidityUsd: null }, NOW), false)
+  assert.equal(isDeadToken({ liquidityUsd: MIN_LIVE_LIQUIDITY_USD - 1 }, NOW), true)
+  assert.equal(isDeadToken({ liquidityUsd: MIN_LIVE_LIQUIDITY_USD }, NOW), false)
+})
+
 test('computeHoldings: flags scam-airdrop symbols (URLs, claim/reward, unicode) as suspicious', () => {
   const ev = (token: string, addr: string, ts: number) =>
     ({ wallet: WALLET, label: 'W', network: 'base', token, tokenAddress: addr, side: 'buy' as const, qty: 1, usd: null, ts, txHash: `${addr}${ts}`, curated: false })

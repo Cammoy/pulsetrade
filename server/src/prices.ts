@@ -160,3 +160,29 @@ export async function poolLiquidityUsd(gtSlug: string, poolAddress: string): Pro
     return null
   }
 }
+
+// Current total DEX liquidity of a TOKEN (summed across its pools) — used to drop dead /
+// rug-pulled tokens from the smart-money signals. Cached 30 min (liquidity shifts slowly).
+// A definitive answer (incl. 404 "no pool" → null) is cached; a transient network error is
+// NOT cached, so it retries. null = "unknown" (the caller KEEPS the token, never drops on it).
+const tokenLiqCache = new Map<string, { at: number; usd: number | null }>()
+const TOKEN_LIQ_TTL = 1_800_000
+export async function tokenLiquidityUsd(gtSlug: string, address: string): Promise<number | null> {
+  const key = `${gtSlug}:${address.toLowerCase()}`
+  const hit = tokenLiqCache.get(key)
+  if (hit && Date.now() - hit.at < TOKEN_LIQ_TTL) return hit.usd
+  try {
+    const res = await fetch(`${GT}/networks/${gtSlug}/tokens/${address}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+    if (!res.ok) {
+      tokenLiqCache.set(key, { at: Date.now(), usd: null }) // 404 = GT doesn't index it → unknown (kept; staleness still applies)
+      return null
+    }
+    const data = await res.json()
+    const r = Number(data?.data?.attributes?.total_reserve_in_usd)
+    const usd = Number.isFinite(r) && r >= 0 ? r : null
+    tokenLiqCache.set(key, { at: Date.now(), usd })
+    return usd
+  } catch {
+    return null // transient — not cached, retried next time
+  }
+}
