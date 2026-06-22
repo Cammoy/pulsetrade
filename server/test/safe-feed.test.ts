@@ -28,8 +28,10 @@ test('hard filter: clean verified token passes', () => {
   assert.equal(passesHardFilter(cleanGp, SAFE_DEFAULTS), true)
 })
 
-test('hard filter: unverified contract is rejected', () => {
-  assert.equal(passesHardFilter({ ...cleanGp, is_open_source: '0' }, SAFE_DEFAULTS), false)
+test('hard filter: unverified contract is NOT hard-rejected (scored, not eliminated)', () => {
+  // Verification often lands minutes after launch; it's a -20 score penalty in
+  // assess(), not a danger signal, so it must not eliminate a sellable token.
+  assert.equal(passesHardFilter({ ...cleanGp, is_open_source: '0' }, SAFE_DEFAULTS), true)
 })
 
 test('hard filter: honeypot / cannot-sell rejected', () => {
@@ -37,9 +39,13 @@ test('hard filter: honeypot / cannot-sell rejected', () => {
   assert.equal(passesHardFilter({ ...cleanGp, cannot_sell_all: '1' }, SAFE_DEFAULTS), false)
 })
 
-test('hard filter: too few holders rejected', () => {
+test('hard filter: few INDEXED holders rejected, but an un-indexed fresh token is not', () => {
+  // GoPlus reports a real low count → genuinely thin distribution → reject.
   assert.equal(passesHardFilter({ ...cleanGp, holder_count: '12' }, SAFE_DEFAULTS), false)
-  assert.equal(passesHardFilter({ ...cleanGp, holder_count: undefined }, SAFE_DEFAULTS), false)
+  // A minutes-old token GoPlus hasn't indexed (count 0, empty holders) must NOT
+  // be rejected here — that's what made the "new" feed structurally always-empty.
+  // Sellability/honeypot still gate it downstream.
+  assert.equal(passesHardFilter({ ...cleanGp, holder_count: '0', holders: [] }, SAFE_DEFAULTS), true)
 })
 
 test('hard filter: single-wallet dominance rejected', () => {
@@ -65,8 +71,11 @@ test('hard filter: top-10 cabal rejected, locked/dead wallets ignored', () => {
   assert.equal(passesHardFilter({ ...cleanGp, holders: mostlyBurned }, SAFE_DEFAULTS), true, 'burn address exempt from dominance')
 })
 
-test('hard filter: missing security data rejected', () => {
-  assert.equal(passesHardFilter(undefined, SAFE_DEFAULTS), false)
+test('hard filter: missing GoPlus is NOT hard-rejected (honeypot.is is the gate downstream)', () => {
+  // GoPlus anonymous tier rate-limits constantly; requiring it = empty feed.
+  // Missing GoPlus flows on to the screen, where honeypot.is must vouch for
+  // sellability and assess() blocks blind when BOTH providers are silent.
+  assert.equal(passesHardFilter(undefined, SAFE_DEFAULTS), true)
 })
 
 // ── end-to-end feed test with all providers mocked ───────────────────────────
@@ -122,15 +131,104 @@ before(() => {
   }) as typeof fetch
 })
 
-test('safe feed returns ONLY the verified, sellable, distributed token', async () => {
+test('safe feed: hard-excludes honeypots & thin distribution; passes sellable tokens (verified scores higher)', async () => {
   const { pools, scanned, error } = await discoverSafePools('base', 'new', NOW)
   assert.equal(error, undefined)
   assert.equal(scanned, 5, 'all candidates were scanned')
-  assert.equal(pools.length, 1, 'only one survives the gate')
-  assert.equal(pools[0].tokenSymbol, 'SAFE')
-  assert.ok(pools[0].report.tradeable)
-  assert.ok(pools[0].report.score >= SAFE_DEFAULTS.minScore)
-  assert.deepEqual([...pools[0].report.sources].sort(), ['GoPlus', 'honeypot.is'])
+  // HONEY (honeypot.is fails the sell sim) and FEW (8 indexed holders) are
+  // hard-excluded; DUST is below the liquidity floor. SAFE (verified) and NOSRC
+  // (unverified but sellable & distributed) both pass — the latter scored down,
+  // not eliminated.
+  assert.deepEqual(pools.map((p) => p.tokenSymbol).sort(), ['NOSRC', 'SAFE'])
+  assert.ok(!pools.some((p) => p.tokenSymbol === 'HONEY'), 'honeypot excluded')
+  assert.ok(!pools.some((p) => p.tokenSymbol === 'FEW'), 'thin distribution excluded')
+  const safe = pools.find((p) => p.tokenSymbol === 'SAFE')!
+  const nosrc = pools.find((p) => p.tokenSymbol === 'NOSRC')!
+  assert.ok(safe.report.tradeable && nosrc.report.tradeable)
+  assert.ok(safe.report.score > nosrc.report.score, 'verified scores above unverified')
+  assert.ok(nosrc.report.flags.some((f) => f.id === 'closed-source'), 'unverified is flagged, not hidden')
+})
+
+test('safe feed: a high-liquidity but ZERO-VOLUME (dead) pool is rejected — never recommended', async () => {
+  const prev = globalThis.fetch
+  const deadAddr = addr('9')
+  const deadFeed = {
+    data: [
+      {
+        attributes: {
+          address: '0xpdead', name: 'DEAD / WETH', base_token_price_usd: '0.5',
+          reserve_in_usd: '50000', // liquidity well ABOVE the floor…
+          volume_usd: { h24: '0' }, // …but ZERO recent turnover → a dead pool (the ROIJIN case)
+          price_change_percentage: { h1: '0' }, fdv_usd: '1000000',
+          pool_created_at: new Date(NOW - 30 * 60_000).toISOString(),
+        },
+        relationships: { base_token: { data: { id: `base_${deadAddr}` } }, dex: { data: { id: 'uniswap_v2' } } },
+      },
+    ],
+    included: [{ id: `base_${deadAddr}`, type: 'token', attributes: { address: deadAddr, symbol: 'DEAD', name: 'DEAD' } }],
+  }
+  globalThis.fetch = (async (url: any) =>
+    String(url).includes('geckoterminal')
+      ? new Response(JSON.stringify(deadFeed), { status: 200 })
+      : new Response('{}', { status: 200 })) as typeof fetch // never even reaches GoPlus/honeypot — filtered pre-screen
+  const { pools } = await discoverSafePools('arbitrum', 'new', NOW + 9_999_999) // fresh cache key
+  assert.equal(pools.length, 0, 'a zero-volume pool never reaches the safe feed, despite ample liquidity')
+  globalThis.fetch = prev
+})
+
+// ── freshness gate (the Auto-Sniper "snipe NEW launches only" guarantee) ──────
+
+function agedPool(sym: string, tokenAddr: string, poolAddr: string, createdAtIso: string | null) {
+  const attrs: Record<string, any> = {
+    address: poolAddr, name: `${sym} / WETH`, base_token_price_usd: '0.5', reserve_in_usd: '50000',
+    volume_usd: { h24: '90000' }, price_change_percentage: { h1: '4' }, fdv_usd: '1000000',
+  }
+  if (createdAtIso) attrs.pool_created_at = createdAtIso // omitted entirely ⇒ unknown creation time
+  return { attributes: attrs, relationships: { base_token: { data: { id: `base_${tokenAddr}` } }, dex: { data: { id: 'uniswap_v3' } } } }
+}
+
+test('freshness gate: maxAgeMinutes keeps fresh launches, drops old coins, fail-closed on unknown age', async () => {
+  const prev = globalThis.fetch
+  const FRESH = addr('7'), OLD = addr('8'), NOAGE = addr('6')
+  const mixed = {
+    data: [
+      agedPool('FRESH', FRESH, '0xpf', new Date(NOW - 30 * 60_000).toISOString()), // 30 min old
+      agedPool('OLD', OLD, '0xpo', new Date(NOW - 200 * 24 * 60 * 60_000).toISOString()), // 200 days old
+      agedPool('NOAGE', NOAGE, '0xpn', null), // no creation time → can't prove it's new
+    ],
+    included: [
+      { id: `base_${FRESH}`, type: 'token', attributes: { address: FRESH, symbol: 'FRESH', name: 'FRESH' } },
+      { id: `base_${OLD}`, type: 'token', attributes: { address: OLD, symbol: 'OLD', name: 'OLD' } },
+      { id: `base_${NOAGE}`, type: 'token', attributes: { address: NOAGE, symbol: 'NOAGE', name: 'NOAGE' } },
+    ],
+  }
+  globalThis.fetch = (async (url: any) => {
+    const u = String(url)
+    if (u.includes('geckoterminal')) return new Response(JSON.stringify(mixed), { status: 200 })
+    if (u.includes('gopluslabs'))
+      return new Response(JSON.stringify({ code: 1, result: { [FRESH]: cleanGp, [OLD]: cleanGp, [NOAGE]: cleanGp } }), { status: 200 })
+    if (u.includes('honeypot.is'))
+      return new Response(JSON.stringify({ simulationSuccess: true, honeypotResult: { isHoneypot: false }, simulationResult: { buyTax: 0, sellTax: 0 } }), { status: 200 })
+    return new Response('{}', { status: 200 })
+  }) as typeof fetch
+
+  // 24h window → only FRESH survives; OLD (200d) and NOAGE (unknown age) are both dropped.
+  const gated = await discoverSafePools('optimism', 'new', NOW + 1_000, { maxAgeMinutes: 24 * 60 })
+  assert.deepEqual(gated.pools.map((p) => p.tokenSymbol).sort(), ['FRESH'], 'only the fresh launch survives the age gate')
+
+  // The 'trending' feed is age-gated too — the filter runs regardless of mode, so an
+  // old coin can never ride in via trending (new + trending, never an established coin).
+  // (Trending raises the liq/vol floors to 25k; the fixtures' 50k/90k clear them.)
+  const trending = await discoverSafePools('optimism', 'trending', NOW + 3_000, { maxAgeMinutes: 24 * 60 })
+  assert.deepEqual(trending.pools.map((p) => p.tokenSymbol).sort(), ['FRESH'], 'trending feed is age-gated too')
+
+  // Opt-in: with NO window (the manual sniper feed + backtest) age is not enforced,
+  // so the old coin still surfaces — behaviour for those callers is unchanged.
+  const ungated = await discoverSafePools('polygon', 'new', NOW + 2_000)
+  assert.ok(ungated.pools.some((p) => p.tokenSymbol === 'OLD'), 'no age gate when maxAgeMinutes is unset')
+  assert.ok(ungated.pools.some((p) => p.tokenSymbol === 'FRESH'))
+
+  globalThis.fetch = prev
 })
 
 test('safe feed result is cached', async () => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { sma, ema, emaSeries, rsi } from '../src/indicators.js'
+import { sma, ema, emaSeries, rsi, stdevReturnsPct, trailingReturnPct } from '../src/indicators.js'
 
 test('sma averages the trailing window', () => {
   assert.equal(sma([1, 2, 3, 4], 2), 3.5)
@@ -33,4 +33,18 @@ test('rsi stays within [0, 100] on noisy data', () => {
   const noisy = Array.from({ length: 200 }, (_, i) => (x += Math.sin(i * 1.7) * 3))
   const r = rsi(noisy, 14)
   assert.ok(r >= 0 && r <= 100 && !Number.isNaN(r))
+})
+
+test('trailingReturnPct: % change over the lookback, NaN until warm', () => {
+  assert.ok(Number.isNaN(trailingReturnPct([100, 110], 5)))
+  assert.ok(Math.abs(trailingReturnPct([100, 105, 110, 120], 3) - 20) < 1e-9, '100→120 over 3 bars = +20%')
+  assert.ok(trailingReturnPct([120, 110, 100, 90], 3) < 0, 'a downtrend is negative')
+})
+
+test('stdevReturnsPct: 0 for a flat series, larger for a choppier one', () => {
+  assert.equal(stdevReturnsPct([100, 100, 100, 100, 100], 4), 0)
+  const calm = stdevReturnsPct([100, 101, 102, 103, 104, 105], 5)
+  const wild = stdevReturnsPct([100, 120, 95, 130, 90, 125], 5)
+  assert.ok(wild > calm, `wild ${wild} > calm ${calm}`)
+  assert.ok(Number.isNaN(stdevReturnsPct([100, 101], 5)), 'NaN until warm')
 })

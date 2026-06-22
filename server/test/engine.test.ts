@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { SLIPPAGE_PER_SIDE as SLIPPAGE } from '../src/costs.js'
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-engine-'))
 
@@ -17,7 +18,6 @@ const { getSpotPrices } = await import('../src/prices.js')
 const { networkById } = await import('../src/networks.js')
 const { execBuy, execSell } = __test
 
-const SLIPPAGE = 0.0015
 const gas = networkById('arbitrum')!.avgGasUsd
 const approx = (a: number, b: number, msg?: string) => assert.ok(Math.abs(a - b) < 1e-9, `${msg ?? ''} (${a} vs ${b})`)
 
@@ -148,7 +148,7 @@ test('equity identity: cash + position value + native taken = budget + total P&L
 })
 
 test('monthly ledger: records realized, fees, volume, sweeps and per-risk P&L', () => {
-  const m0 = structuredClone(state.monthly[monthKey(Date.now())] ?? null)
+  const m0 = structuredClone(state.monthly.paper[monthKey(Date.now())] ?? null)
   const bot = freshBot({ risk: 'aggressive' })
   execBuy(bot, 10, 500, 'in')
   const qty = bot.position.qty
@@ -157,7 +157,7 @@ test('monthly ledger: records realized, fees, volume, sweeps and per-risk P&L', 
   const sellFee = gas + gross * SLIPPAGE
   const buyFee = gas + 500 * SLIPPAGE
   const pnl = gross - sellFee - 500
-  const m = state.monthly[monthKey(Date.now())]
+  const m = state.monthly.paper[monthKey(Date.now())]
   approx(m.realizedUsd - (m0?.realizedUsd ?? 0), pnl, 'monthly realized')
   approx(m.feesUsd - (m0?.feesUsd ?? 0), buyFee + sellFee, 'monthly fees')
   approx(m.volumeUsd - (m0?.volumeUsd ?? 0), 500 + gross, 'monthly volume')
@@ -166,16 +166,31 @@ test('monthly ledger: records realized, fees, volume, sweeps and per-risk P&L', 
   assert.equal(m.wins - (m0?.wins ?? 0), 1)
 })
 
+test('monthly ledger: per-risk buckets always reconcile to realized (Σ byRisk == realizedUsd)', () => {
+  // The Monthly P&L UI shows realized as a headline and a per-tolerance breakdown;
+  // those columns must add up to the headline. The engine accumulates both from the
+  // SAME per-trade pnl, so the invariant holds no matter the mix of wins/losses/tiers.
+  const cons = freshBot({ risk: 'conservative' })
+  execBuy(cons, 10, 300, 'in')
+  execSell(cons, 12, 1, 'out', true) // a win, conservative
+  const aggr = freshBot({ risk: 'aggressive' })
+  execBuy(aggr, 10, 300, 'in')
+  execSell(aggr, 8, 1, 'out', true) // a loss, aggressive
+  const m = state.monthly.paper[monthKey(Date.now())]
+  const sum = Object.values(m.byRisk).reduce((s, v) => s + v, 0)
+  approx(sum, m.realizedUsd, 'sum of per-risk buckets equals realized — columns reconcile to the total')
+})
+
 test('monthly ledger survives bot deletion (trades do not)', () => {
-  const before = state.monthly[monthKey(Date.now())].realizedUsd
+  const before = state.monthly.paper[monthKey(Date.now())].realizedUsd
   const bot = freshBot()
   execBuy(bot, 10, 100, 'in')
   execSell(bot, 12, 1, 'out', true)
-  const after = state.monthly[monthKey(Date.now())].realizedUsd
+  const after = state.monthly.paper[monthKey(Date.now())].realizedUsd
   assert.ok(after > before)
   deleteBot(bot.id)
   assert.equal(state.trades.filter((t) => t.botId === bot.id).length, 0, 'trades removed')
-  assert.equal(state.monthly[monthKey(Date.now())].realizedUsd, after, 'ledger intact')
+  assert.equal(state.monthly.paper[monthKey(Date.now())].realizedUsd, after, 'ledger intact')
 })
 
 test('market bots: any CoinGecko coin trades in paper, sweeping to USDT', () => {
@@ -222,13 +237,13 @@ test('createBot validation rejects bad input', () => {
   )
 })
 
-test('pause / resume lifecycle', () => {
+test('pause / resume lifecycle', async () => {
   const bot = freshBot()
-  controlBot(bot.id, 'pause')
+  await controlBot(bot.id, 'pause')
   assert.equal(bot.status, 'paused')
-  controlBot(bot.id, 'resume')
+  await controlBot(bot.id, 'resume')
   assert.equal(bot.status, 'running')
-  assert.ok('error' in (controlBot('missing', 'pause') as any))
+  assert.ok('error' in (await controlBot('missing', 'pause')))
 })
 
 test('inSchedule: days, windows, overnight windows, disabled', () => {
@@ -245,6 +260,34 @@ test('inSchedule: days, windows, overnight windows, disabled', () => {
   assert.equal(inSchedule(mk(true, [1, 2], 22, 6), tue3), true, 'overnight: after midnight')
   assert.equal(inSchedule(mk(true, [1, 2], 22, 6), mon10), false, 'overnight: daytime excluded')
   assert.equal(inSchedule(mk(false, [], 0, 0), sun12), true, 'disabled schedule = always on')
+})
+
+test('EXIT-1: a bot OUTSIDE its trading window still manages an open position (stop-loss fires)', async () => {
+  // Schedule that excludes TODAY → out-of-window regardless of the hour.
+  const notToday = (new Date().getDay() + 1) % 7
+  const bot = freshBot({ schedule: { enabled: true, days: [notToday], startHour: 0, endHour: 24 } }) as Exclude<ReturnType<typeof freshBot>, { error: string }>
+  execBuy(bot, 100, 500, 'in') // bought at ~$100; LINK spot is $10 → deeply underwater
+  assert.ok(bot.position.qty > 0)
+  // Provide candles for the meanrev indicators (declining series); only the market_chart call.
+  const baseFetch = globalThis.fetch
+  const declining = Array.from({ length: 60 }, (_, i) => [Date.now() - (60 - i) * 3_600_000, 100 - i])
+  globalThis.fetch = (async (url: any) =>
+    String(url).includes('market_chart') ? new Response(JSON.stringify({ prices: declining }), { status: 200 }) : baseFetch(url)) as typeof fetch
+  try {
+    await __test.tickBot(bot)
+  } finally {
+    globalThis.fetch = baseFetch
+  }
+  assert.equal(bot.status, 'scheduled', 'the bot is out of its trading window')
+  assert.equal(bot.position.qty, 0, 'the stop-loss STILL fired and closed the position despite the window being shut')
+})
+
+test('EXIT-1: a FLAT bot outside its window sleeps (no trade) — buys are never opened off-window', async () => {
+  const notToday = (new Date().getDay() + 1) % 7
+  const bot = freshBot({ schedule: { enabled: true, days: [notToday], startHour: 0, endHour: 24 } }) as Exclude<ReturnType<typeof freshBot>, { error: string }>
+  await __test.tickBot(bot) // flat + scheduled → early return, no fetch, no position opened
+  assert.equal(bot.status, 'scheduled')
+  assert.equal(bot.position.qty, 0)
 })
 
 test('serializeBot computes unrealized and total P&L from the live price', () => {
