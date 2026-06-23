@@ -238,7 +238,7 @@ Copy `server/.env.example` → `server/.env`. Everything is optional in paper mo
 - **Live EVM** — `ZEROX_API_KEY`, `BOT_WALLET_KEY` *or* `TURNKEY_*`
 - **Live Solana** — `SOLANA_WALLET_KEY` *or* Turnkey Solana
 - **Auth** — `ENGINE_TOKEN` (+ `VITE_ENGINE_TOKEN` for the web)
-- **Smart money** — `ETHERSCAN_API_KEY` (live feed; watchlist works without)
+- **Smart money** — `ETHERSCAN_API_KEY` (live feed; watchlist works without). ⚠ The **free** tier is Ethereum-mainnet-only — **L2 wallet tracking, copy-trade signals on tradeable L2s, and discovery need a paid multichain Etherscan plan** (the UI shows a "needs multichain" hint otherwise)
 - **AI** — `GEMINI_API_KEY` (free tier covers it)
 - **Safety caps & alerts** — see [Safety & risk controls](#-safety--risk-controls)
 
