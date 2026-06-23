@@ -17,6 +17,7 @@ import { addLot, addSell, editLot, removeLot, removeSell, removeAsset, valueTrac
 import { backtest, profitFinder } from './backtest.js'
 import { liveReady, botWalletAddress, evmSigner, swapPrice0x, executeSwapGeneral, tokenInfo, swapBalance, lifiQuote, executeCrossChainEvm, LIFI_SOLANA_CHAIN } from './live.js'
 import { tokenList } from './tokens-list.js'
+import { iconProxy } from './icons.js'
 import { spot } from './prices.js'
 import { solanaLiveReady, solanaWalletAddress, solanaSigner, jupiterQuote, splTokenInfo, splTokenBalanceBaseUnits, executeSolanaSwap, executeCrossChainSolana, SOL_MINT } from './live-solana.js'
 import { screenToken, screenAddress } from './screen-fetch.js'
@@ -245,6 +246,10 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
     const ratio = BigInt(Math.round((sp / bp) * 1e9))
     return (amt * ratio * 10n ** BigInt(bm.decimals)) / (10n ** BigInt(sm.decimals) * 1_000_000_000n)
   }
+
+  // Cached coin-icon proxy — long browser cache + a shared server cache, so icons aren't
+  // re-fetched each load (revalidated when they occasionally change). Allowlisted hosts only.
+  app.get('/api/icon', (req, res) => { void iconProxy(req, res) })
 
   // Comprehensive per-network token list for the swap picker (CoinGecko-sourced, cached).
   app.get('/api/swap/tokens/:network', ah(async (req, res) => {

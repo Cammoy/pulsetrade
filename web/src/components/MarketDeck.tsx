@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useWatchlist } from '../useWatchlist'
 import { useNewPools } from '../useNewPools'
 import { pnlColor, fmtCompactUsd as big } from '../format'
+import { iconUrl } from '../icon'
 import type { MarketCoin, MarketOverview, SafePool } from '../types'
 import Sparkline from './Sparkline'
 import NetworkSelect from './NetworkSelect'
@@ -343,7 +344,7 @@ const CoinCard = memo(function CoinCard({
       {/* collapsed row — click anywhere (or the chevron) to expand */}
       <div onClick={toggle} className="flex cursor-pointer items-center gap-2 px-2.5 py-2.5 transition-colors hover:bg-[var(--surface-hover)] dark:hover:bg-white/[0.02]">
         {coin.image ? (
-          <img src={coin.image} alt="" loading="lazy" className="h-5 w-5 shrink-0 rounded-full bg-white/5" />
+          <img src={iconUrl(coin.image)} alt="" loading="lazy" className="h-5 w-5 shrink-0 rounded-full bg-white/5" />
         ) : (
           <span className="token-fallback grid h-5 w-5 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-500/40 to-cyan-500/40 text-[9px] font-bold text-[var(--ink)]" aria-hidden="true">{coin.symbol.slice(0, 1)}</span>
         )}

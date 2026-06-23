@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { useModal } from '../useModal'
 import { computeProfit, priceFromMarketCap, type AmountMode } from '../calc'
 import { fmtUsd, fmtSign, fmtPct, fmtPrice, fmtQty, fmtCompactUsd, pnlColor, parseAmount } from '../format'
+import { iconUrl } from '../icon'
 
 const num = (s: string) => parseAmount(s) ?? 0
 const cleanNum = (n: number) => (Number.isFinite(n) ? String(Number(n.toPrecision(8))) : '0')
@@ -139,7 +140,7 @@ export default function ProfitCalculator() {
               <div className="absolute left-0 right-0 z-20 mt-1 max-h-56 overflow-auto rounded-xl border border-white/10 bg-[var(--menu)] p-1 shadow-xl">
                 {hits.map((h) => (
                   <button key={h.id} onClick={() => pickCoin(h)} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-slate-200 hover:bg-white/[0.06]">
-                    {h.thumb ? <img src={h.thumb} alt="" className="h-5 w-5 rounded-full" /> : <span className="h-5 w-5 rounded-full bg-[var(--surface-sunken)] dark:bg-white/10" />}
+                    {h.thumb ? <img src={iconUrl(h.thumb)} alt="" loading="lazy" className="h-5 w-5 rounded-full" /> : <span className="h-5 w-5 rounded-full bg-[var(--surface-sunken)] dark:bg-white/10" />}
                     <span className="font-semibold">{h.symbol}</span>
                     <span className="min-w-0 flex-1 truncate text-slate-500">{h.name}</span>
                     {h.rank && <span className="shrink-0 text-[10px] text-slate-600">#{h.rank}</span>}

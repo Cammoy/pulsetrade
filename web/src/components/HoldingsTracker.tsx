@@ -3,6 +3,7 @@ import { useStore, jpost } from '../store'
 import { useModal } from '../useModal'
 import type { AssetMetrics, CoinHit, TrackerValuation } from '../types'
 import { fmtUsd, fmtSign, fmtPct, fmtQty, fmtPrice, pnlColor, ASSET_COLORS } from '../format'
+import { iconUrl } from '../icon'
 import Sparkline from './Sparkline'
 import Donut from './Donut'
 
@@ -447,7 +448,7 @@ function AddPosition({ onDone, notify }: { onDone: () => void; notify: (m: strin
             <div className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-white/10 bg-[var(--modal)] p-1 shadow-xl">
               {hits.map((c) => (
                 <button key={c.id} onClick={() => { setPicked(c); setHits([]) }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-white/[0.06]">
-                  {c.thumb && <img src={c.thumb} alt="" className="h-5 w-5 rounded-full" />}
+                  {c.thumb && <img src={iconUrl(c.thumb)} alt="" loading="lazy" className="h-5 w-5 rounded-full" />}
                   <span className="font-medium text-slate-200">{c.symbol}</span>
                   <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{c.name}</span>
                   {c.rank && <span className="text-[10px] text-slate-600">#{c.rank}</span>}
@@ -459,7 +460,7 @@ function AddPosition({ onDone, notify }: { onDone: () => void; notify: (m: strin
       ) : (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            {picked.thumb && <img src={picked.thumb} alt="" className="h-5 w-5 rounded-full" />}
+            {picked.thumb && <img src={iconUrl(picked.thumb)} alt="" loading="lazy" className="h-5 w-5 rounded-full" />}
             <span className="text-sm font-semibold text-slate-100">{picked.symbol}</span>
             <span className="text-xs text-slate-500">{picked.name}</span>
             <button className="ml-auto text-[11px] text-indigo-300 hover:underline" onClick={() => setPicked(null)}>change</button>
