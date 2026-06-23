@@ -1,10 +1,10 @@
 import { coinLinks } from '../coinLinks'
 
 /**
- * Compact, ICON-ONLY external-research links (CoinGecko, CoinMarketCap, DexScreener,
- * Explorer). Used wherever a token is listed (consensus holdings, the buying/selling
- * board, the new-coins radar) — icon-only keeps dense lists scannable instead of each
- * row carrying four wordy buttons. Labels show on hover.
+ * Compact, ICON-ONLY external-research links (GeckoTerminal, DexScreener, Explorer).
+ * Used wherever a token is listed (consensus holdings, the buying/selling board, the
+ * new-coins radar) — icon-only keeps dense lists scannable instead of each row carrying
+ * wordy buttons. Labels show on hover.
  */
 export default function CoinLinks({ network, address, className = '' }: { network: string; address: string; className?: string }) {
   const links = coinLinks(network, address)
