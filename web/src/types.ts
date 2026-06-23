@@ -238,6 +238,7 @@ export interface WalletTokenStat {
   volumeUsd: number
   netFlowUsd: number
   lastTs: number
+  priced: boolean // false ⇒ unlisted token, USD value unknown (show "—", not $0)
 }
 
 export interface WalletStats {

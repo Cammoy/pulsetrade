@@ -91,6 +91,13 @@ describe('CopyTrading', () => {
     await waitFor(() => expect(document.body).toHaveTextContent(/Wallet tracking needs an Etherscan API key/i))
   })
 
+  test('leaderboard surfaces a pricing-degraded hint when no row has realized-P&L', async () => {
+    board([row({ basis: 'flow', realizedPnlUsd: null }), row({ address: '0x' + 'e'.repeat(40), label: 'X', basis: 'flow', realizedPnlUsd: null })])
+    render(<CopyTrading />)
+    await waitFor(() => expect(document.body).toHaveTextContent(/Realized-P&L scoring is temporarily degraded/i))
+    expect(document.body).toHaveTextContent(/COINGECKO_API_KEY/)
+  })
+
   test('Discover lists verified external traders with a Copy action', async () => {
     const trader: DiscoveredTrader = {
       address: '0x' + 'd'.repeat(40), score: 71, tier: 'promising', realizedPnlUsd: 3400,

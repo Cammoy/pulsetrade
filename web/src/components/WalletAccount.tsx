@@ -117,7 +117,17 @@ export default function WalletAccount({ address, onClose }: { address: string; o
         </div>
       )}
 
-      {loading && <div className="py-8 text-center text-xs text-slate-500">Loading on-chain activity across all chains…</div>}
+      {loading && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-center gap-2 py-3 text-xs text-slate-400">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/15 border-t-indigo-400" />
+            Reading on-chain activity across every chain & reconstructing realized P&L…
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded-xl bg-white/[0.03]" />)}</div>
+          <div className="h-20 animate-pulse rounded-xl bg-white/[0.03]" />
+          <div className="h-40 animate-pulse rounded-xl bg-white/[0.03]" />
+        </div>
+      )}
 
       {!loading && s && (
         <>
@@ -201,7 +211,10 @@ export default function WalletAccount({ address, onClose }: { address: string; o
 
           {s.tokens.length > 0 && (
             <div className="rounded-xl border border-white/[0.08]">
-              <div className="px-3 pt-2 text-[10px] uppercase tracking-wider text-slate-500">Trading flow (curated tokens) · {s.tokens.length}</div>
+              <div className="flex items-baseline justify-between px-3 pt-2">
+                <span className="text-[10px] uppercase tracking-wider text-slate-500">Trading flow · {s.tokens.length} tokens</span>
+                <span className="text-[10px] text-slate-600">“—” = unlisted (USD value unknown)</span>
+              </div>
               {/* Scroll the long token list (a busy wallet trades dozens) with a pinned header. */}
               <div className="max-h-72 overflow-auto">
                 <table className="w-full min-w-[440px] text-xs">
@@ -212,10 +225,10 @@ export default function WalletAccount({ address, onClose }: { address: string; o
                   {s.tokens.map((t) => (
                     <tr key={`${t.network}:${t.token}`} className="border-t border-white/[0.04] tabular-nums">
                       <td className="px-3 py-1.5 font-medium text-slate-200">{t.token} <span className="text-slate-600">· {t.network}</span></td>
-                      <td className={`px-3 py-1.5 ${pnlColor(t.netFlowUsd)}`}>{fmtSign(t.netFlowUsd)}</td>
+                      <td className={`px-3 py-1.5 ${t.priced ? pnlColor(t.netFlowUsd) : 'text-slate-600'}`}>{t.priced ? fmtSign(t.netFlowUsd) : '—'}</td>
                       <td className="px-3 py-1.5 text-emerald-300">{t.buys}</td>
                       <td className="px-3 py-1.5 text-rose-300">{t.sells}</td>
-                      <td className="px-3 py-1.5 text-slate-400">{fmtUsd(t.volumeUsd)}</td>
+                      <td className="px-3 py-1.5 text-slate-400">{t.priced ? fmtUsd(t.volumeUsd) : '—'}</td>
                       <td className="px-3 py-1.5 text-slate-500">{timeAgo(t.lastTs)}</td>
                     </tr>
                   ))}

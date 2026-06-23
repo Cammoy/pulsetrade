@@ -264,12 +264,20 @@ const Spinner = ({ label }: { label: string }) => (
 
 // ── Leaderboard ──────────────────────────────────────────────────────────────
 function Leaderboard({ rows, loading, caveat, onCopy, onSelect }: { rows: LeaderboardRow[]; loading: boolean; caveat: string; onCopy: (w: { address: string; label: string }) => void; onSelect: (address: string) => void }) {
+  // When no row could be priced (CoinGecko historical endpoint rate-limited), the board falls back
+  // to net-flow scoring — say so, and point at the fix instead of silently mislabelling.
+  const degraded = rows.length > 0 && !rows.some((r) => r.basis === 'realized-pnl')
   return (
     <Card
       title="🏆 Copy-worthiness leaderboard"
-      sub="Tracked wallets ranked by realized P&L (cost-basis) — a research starting point, not a guarantee"
+      sub={degraded ? 'Ranked by net flow — realized-P&L pricing is rate-limited right now' : 'Tracked wallets ranked by realized P&L (cost-basis) — a research start, not a guarantee'}
       right={loading ? <Spinner label={rows.length ? 'Refreshing…' : 'Scoring wallets…'} /> : undefined}
     >
+      {degraded && (
+        <div className="mb-2 rounded-lg bg-amber-500/10 px-3 py-1.5 text-[11px] leading-relaxed text-amber-200">
+          Realized-P&L scoring is temporarily degraded — CoinGecko’s historical endpoint is rate-limited. Set a free <code className="rounded code-block px-1">COINGECKO_API_KEY</code> for true cost-basis P&L (and to power trader discovery).
+        </div>
+      )}
       {loading && rows.length === 0 ? (
         <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-white/[0.03]" />)}</div>
       ) : rows.length === 0 ? (
