@@ -21,7 +21,7 @@ import { spot } from './prices.js'
 import { solanaLiveReady, solanaWalletAddress, solanaSigner, jupiterQuote, splTokenInfo, splTokenBalanceBaseUnits, executeSolanaSwap, executeCrossChainSolana, SOL_MINT } from './live-solana.js'
 import { screenToken, screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
-import { listWallets, addWallet, removeWallet, smartMoneyFeed, walletProfile, trackingReady, tokensForCopyTrade, gatherConsensusHoldings } from './smartmoney.js'
+import { listWallets, addWallet, removeWallet, smartMoneyFeed, walletProfile, trackingReady, tokensForCopyTrade, gatherConsensusHoldings, smartMoneyLeaderboard } from './smartmoney.js'
 import { EVM_ADDR, CG_ID, isKnownAddress } from './validators.js'
 import { smartMoneyIntelligence } from './smart-insights.js'
 import { aiReady } from './ai-trader.js'
@@ -447,6 +447,11 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
   // Tokens held by 2+ tracked whales right now — registered before /:network.
   app.get('/api/smart-money/consensus-holdings', ah(async (_req, res) => {
     res.json(await gatherConsensusHoldings())
+  }))
+
+  // Copy-worthiness ranking of every tracked wallet — registered before /:network.
+  app.get('/api/smart-money/leaderboard', ah(async (_req, res) => {
+    res.json(await smartMoneyLeaderboard())
   }))
 
   app.get('/api/smart-money/:network', ah(async (req, res) => {

@@ -754,3 +754,74 @@ export async function walletRecentBuys(address: string, sinceTs: number): Promis
   const events = await walletEvents(address)
   return events.filter((e) => e.side === 'buy' && e.ts > sinceTs)
 }
+
+// ── Copy-worthiness leaderboard ──────────────────────────────────────────────
+// Ranks EVERY tracked wallet by the same flow-based copy-worthiness score the wallet
+// profile shows, so the Copy Trading hub can answer "who is worth copying?" up front.
+// Reuses the pure stats/score functions; carries the same loud caveat (flow ≠ true PnL).
+
+export interface LeaderboardRow {
+  address: string
+  label: string
+  category?: string
+  note?: string
+  score: number
+  tier: WalletScore['tier']
+  realizedFlowUsd: number
+  roundTrips: number
+  recencyDays: number | null
+  trades: number
+  netFlowUsd: number
+  lastTs: number | null
+  series: number[] // cumulative-flow sparkline (downsampled, oldest→newest)
+  topTokens: { network: string; token: string }[] // a few signal tokens they trade
+}
+
+/** Evenly downsample a series to at most `max` points (keeps first + last). */
+function downsampleSeries(series: { v: number }[], max: number): number[] {
+  const vals = series.map((p) => p.v)
+  if (vals.length <= max) return vals
+  const step = (vals.length - 1) / (max - 1)
+  return Array.from({ length: max }, (_, i) => vals[Math.round(i * step)])
+}
+
+let leaderboardCache: { at: number; rows: LeaderboardRow[] } | null = null
+const LEADERBOARD_TTL = 10 * 60_000 // 10 min — same wallet fetches as consensus; scores move slowly
+
+/** Score + rank all tracked wallets by copy-worthiness. Cached 10 min (same per-wallet
+ *  Etherscan fetches as the consensus view). Returns `needsKey` when tracking is off. */
+export async function smartMoneyLeaderboard(now = Date.now()): Promise<{ rows: LeaderboardRow[]; needsKey: boolean; totalWallets: number; caveat: string }> {
+  ensureSeeded()
+  const totalWallets = listWallets().length
+  if (!trackingReady()) return { rows: [], needsKey: true, totalWallets, caveat: SCORE_CAVEAT }
+  if (leaderboardCache && now - leaderboardCache.at < LEADERBOARD_TTL)
+    return { rows: leaderboardCache.rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT }
+  // Warm mainnet majors so USD-valued flow (and thus realized-flow) is populated.
+  await getSpotPrices(MAINNET_CG_IDS).catch(() => {})
+  const rows: LeaderboardRow[] = []
+  for (const w of listWallets()) {
+    const events = await walletEvents(w.address, { allTokens: true }).catch(() => [])
+    const stats = computeWalletStats(events)
+    const score = computeWalletScore(stats, now)
+    rows.push({
+      address: w.address,
+      label: w.label,
+      category: w.category,
+      note: w.note,
+      score: score.score,
+      tier: score.tier,
+      realizedFlowUsd: score.realizedFlowUsd,
+      roundTrips: score.roundTrips,
+      recencyDays: score.recencyDays,
+      trades: stats.trades,
+      netFlowUsd: stats.netFlowUsd,
+      lastTs: stats.lastTs,
+      series: downsampleSeries(stats.series, 48),
+      topTokens: stats.tokens.filter((t) => isSignalToken(t.token)).slice(0, 3).map((t) => ({ network: t.network, token: t.token })),
+    })
+  }
+  // Best first: score, then realized flow, then most recent activity.
+  rows.sort((a, b) => b.score - a.score || b.realizedFlowUsd - a.realizedFlowUsd || (b.lastTs ?? 0) - (a.lastTs ?? 0))
+  leaderboardCache = { at: now, rows }
+  return { rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT }
+}
