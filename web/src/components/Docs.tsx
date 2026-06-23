@@ -144,7 +144,16 @@ const SECTIONS: Section[] = [
           <LI><B>Accounts</B> — open a wallet for its history, a cumulative net-flow chart, a per-token breakdown, and a copy-worthiness score (proven / promising / unproven, with a “flow heuristic, not verified PnL” caveat).</LI>
           <LI><B>Auto-follow</B> — give a wallet a budget + per-trade size; whenever it buys <em>any</em> curated token a mirror bot enters with your size and exits when it sells (plus your risk stops). Returns recycle into the next mirror.</LI>
         </ul>
-        <P>Live wallet data needs a free <C>ETHERSCAN_API_KEY</C>; the watchlist and follow setup work without it and act once tracking is enabled. Wallet tracking is EVM-only. Tracking is informational — <B>smart money is sometimes very wrong</B>; re-validate before live copy-trading.</P>
+        <H>The Copy Trading hub</H>
+        <P>The <B>🔁 Copy Trading</B> channel is the action-focused companion to Smart Money — rank who’s worth copying, then mirror them.</P>
+        <ul className="mb-3 ml-4 list-disc space-y-1.5">
+          <LI><B>Leaderboard</B> — every tracked wallet ranked by <B>true realized P&amp;L</B> reconstructed from on-chain transfers (average-cost basis at historical prices). Tiers: proven / promising / unproven. Without a <C>COINGECKO_API_KEY</C> the historical pricing is rate-limited and the board falls back to a net-flow heuristic (you’ll see a “degraded” hint).</LI>
+          <LI><B>Discover</B> — a background crawl that finds wallets you don’t track yet by scanning recent buyers of your curated tokens, then verifying each by realized P&amp;L. Only genuinely profitable, recently-active round-trippers surface.</LI>
+          <LI><B>Guided setup</B> — copy one token or auto-follow every buy, with a per-trade size and optional stop-loss / take-profit. A live preview spells out exactly what the bot will do and which safety caps apply. Click any wallet for the full analysis (net-flow chart, holdings, per-token flow, trades).</LI>
+        </ul>
+        <H>How a copy exits</H>
+        <P>A copy <B>mirrors</B> the wallet — buys when they buy, exits when they sell — so you ride their <em>full</em> move rather than capping it at a tier take-profit. Stop-loss and take-profit are opt-in. The exception is live money: a copy in the <B>Live</B> workspace gets a wide <B>catastrophic stop-loss</B> by default (bounding a rug while the wallet’s sell is still being detected) — widen or replace it in Advanced.</P>
+        <P>Live wallet data needs a free <C>ETHERSCAN_API_KEY</C>; the watchlist and follow setup work without it and act once tracking is enabled. Realized-P&amp;L scoring + discovery additionally benefit from a free <C>COINGECKO_API_KEY</C> (else they degrade to net-flow). Wallet tracking is EVM-only. Tracking is informational — <B>smart money is sometimes very wrong</B>; re-validate before live copy-trading.</P>
       </>
     ),
   },

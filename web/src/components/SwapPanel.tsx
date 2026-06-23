@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { useModal } from '../useModal'
 import { parseAmount, timeAgo } from '../format'
 import { explorerTxUrl } from '../explorer'
+import { iconUrl } from '../icon'
 import NetworkSelect from './NetworkSelect'
 import type { Network } from '../types'
 
@@ -54,7 +55,7 @@ const fromBaseUnits = (base: string, decimals: number, dp = 6): string => {
 /** Round token logo with a letter fallback. */
 function TokenLogo({ tok, size = 20 }: { tok: SwapToken; size?: number }) {
   const [bad, setBad] = useState(false)
-  if (tok.logoURI && !bad) return <img src={tok.logoURI} alt="" width={size} height={size} className="shrink-0 rounded-full" onError={() => setBad(true)} />
+  if (tok.logoURI && !bad) return <img src={iconUrl(tok.logoURI)} alt="" width={size} height={size} loading="lazy" className="shrink-0 rounded-full" onError={() => setBad(true)} />
   return (
     <span className="flex shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-slate-300" style={{ width: size, height: size }}>
       {(tok.symbol || '?').charAt(0).toUpperCase()}

@@ -50,6 +50,10 @@ export interface SniperConfig {
 export interface CopyConfig {
   walletAddress: string
   walletLabel: string
+  /** Copy controls (all optional; unset ⇒ risk-tier defaults). */
+  perTradeUsd?: number // fixed USD deployed per copied entry (overrides positionPct)
+  stopLossPct?: number // overrides the risk tier's stop-loss
+  takeProfitPct?: number // overrides the risk tier's take-profit
 }
 
 /** Where sweeps (profits, stop-liquidations) are converted to. */
@@ -206,6 +210,8 @@ export interface Follow {
   maxConcurrent: number
   risk: 'conservative' | 'balanced' | 'aggressive'
   sweepTo?: SweepTarget
+  stopLossPct?: number // override applied to every spawned mirror bot
+  takeProfitPct?: number // override applied to every spawned mirror bot
   enabled: boolean
   startedAt: number
   lastScanAt: number

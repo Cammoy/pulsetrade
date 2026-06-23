@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useStore } from './store'
+import { useHashRoute } from './routing'
 import { useShallow } from 'zustand/react/shallow'
 import { botsForMode } from './stats'
 import Header from './components/Header'
@@ -21,6 +22,7 @@ import Wizard from './components/Wizard'
 import BotDetail from './components/BotDetail'
 import ErrorBoundary from './components/ErrorBoundary'
 import SmartMoney from './components/SmartMoney'
+import CopyTrading from './components/CopyTrading'
 import AiBot from './components/AiBot'
 import MarketPanel from './components/MarketPanel'
 import Portfolio from './components/Portfolio'
@@ -57,6 +59,8 @@ function Main() {
   const [ready, setReady] = useState(false)
   const [bootErr, setBootErr] = useState(false)
   const [launching, setLaunching] = useState(false)
+  // Bookmarkable URLs: sync the location hash with the active channel / portfolio tab / open bot.
+  useHashRoute(ready)
 
   // A bot is archived if manually archived OR retired (status 'stopped') — either way
   // it's hidden from the active grid and shown in the collapsible Archived section.
@@ -135,6 +139,8 @@ function Main() {
               <MarketPanel />
             ) : view === 'smart' ? (
               <SmartMoney />
+            ) : view === 'copy' ? (
+              <CopyTrading />
             ) : view === 'docs' ? (
               <Docs />
             ) : (

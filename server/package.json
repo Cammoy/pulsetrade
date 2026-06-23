@@ -10,6 +10,7 @@
     "dev": "node scripts/launch.mjs --watch",
     "start": "node scripts/launch.mjs",
     "verify:turnkey": "node --import tsx scripts/verify-turnkey.ts",
+    "verify:coingecko": "node --import tsx scripts/verify-coingecko.ts",
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {

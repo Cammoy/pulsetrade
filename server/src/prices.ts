@@ -3,6 +3,7 @@
 // backoff that leaves prices/holdings briefly unpriced; set COINGECKO_PRO=true for a
 // paid key. Without a key it uses the heavily-throttled public tier.
 import { markProvider } from './health.js'
+import { ttlCache } from './ttl-cache.js'
 const CG_KEY = process.env.COINGECKO_API_KEY || ''
 const CG_PRO = CG_KEY !== '' && process.env.COINGECKO_PRO === 'true'
 const CG = CG_PRO ? 'https://pro-api.coingecko.com/api/v3' : 'https://api.coingecko.com/api/v3'
@@ -110,6 +111,37 @@ export async function getCandles(id: string, days = 30): Promise<{ t: number; c:
     return closes
   }
   return hit?.closes ?? []
+}
+
+// ── Historical pricing (for cost-basis realized-PnL reconstruction) ──────────
+// A ~1y daily price series per coin, cached 6h (closed candles barely move). Reuses getCandles
+// (CoinGecko market_chart + its 429 backoff + stale-on-fail), so cost-basis valuation shares the
+// same rate-limit budget. Used to price a wallet's historical transfers at the time they happened.
+const histSeries = ttlCache<{ t: number; c: number }[]>(6 * 3_600_000)
+
+export async function historicalSeries(cgId: string): Promise<{ t: number; c: number }[]> {
+  const fresh = histSeries.fresh(cgId)
+  if (fresh) return fresh
+  const series = await getCandles(cgId, 365)
+  return series.length ? histSeries.set(cgId, series) : (histSeries.stale(cgId) ?? [])
+}
+
+/** USD price at (or nearest to) a timestamp from an ascending daily series. Returns null when
+ *  the series is empty or the timestamp predates our ~1y window (an unknowable entry price). */
+export function priceAt(series: { t: number; c: number }[], tsMs: number): number | null {
+  if (!series.length) return null
+  if (tsMs < series[0].t - 2 * 86_400_000) return null // older than our history — don't guess
+  let lo = 0
+  let hi = series.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (series[mid].t < tsMs) lo = mid + 1
+    else hi = mid
+  }
+  const a = series[lo]
+  const b = series[lo - 1]
+  if (!b) return a.c
+  return Math.abs(a.t - tsMs) <= Math.abs(b.t - tsMs) ? a.c : b.c
 }
 
 // ── GeckoTerminal pool pricing (for sniped tokens not on CoinGecko) ──────────

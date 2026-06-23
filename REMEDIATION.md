@@ -183,3 +183,37 @@ Tests: `p2-tail.test.ts` (+P1-7 reconcile), `p2-closed-bar.test.ts` (P2-6), `liv
 - **P2-1 Jito bundles**: operational/infra — protected EVM relay is supported & documented.
 - Minor sub-notes on P0-4/P0-5/P0-8 in the P0 list above (boot env-coherence test, per-trade
   max-USD env, 30–60s vs 90s receipt waits) — each documented, none money-unsafe.
+
+## Session 9 — Copy Trading hub (live-money readiness)
+
+Added a dedicated Copy Trading channel: copy-worthiness **leaderboard** (true realized-P&L
+cost-basis scoring, net-flow fallback), on-chain **trader discovery**, **copy controls** (per-trade
+size + opt-in SL/TP), a cached **coin-icon proxy**, bookmarkable **hash routing**, and corrected
+external research links (GeckoTerminal).
+
+**Money-path conclusion (reviewed):** copy bots are NOT exempt from any rail — they enter/exit
+through the same `settle()` path, so circuit breaker, daily/lifetime caps, per-token exposure, gas
+reserve, price-staleness and paper/live pinning all apply. No bypass found.
+
+**Live-safety hardening:**
+- Copies **mirror** the wallet (exit on the wallet's sell), with **no take-profit cap** (don't clip
+  the upside). To avoid leaving live capital unprotected during sell-detection lag, a wide
+  **catastrophic stop-loss** (`LIVE_COPY_STOP_PCT`, engine.ts) is auto-applied to **live** copies;
+  paper stays pure mirror. User-set SL/TP always override.
+- `perTradeUsd` is clamped to cash + validated ≤ budget; the gas-economics floor uses the real
+  per-entry size. The `/api/icon` proxy is https + host-allowlisted + image-only + size-bounded
+  (Content-Length pre-check) — no SSRF.
+
+**Dependencies:** `ETHERSCAN_API_KEY` (wallet tracking; watchlist works without). `COINGECKO_API_KEY`
+strongly recommended — powers realized-P&L scoring + discovery; without it both degrade to net-flow
+(UI shows a "degraded" hint).
+
+**Tests:** unit (`copy-controls`, `realized-pnl`, `icons`, `routing`, `smartmoney` priced-flag),
+integration (`copy-engine` — a copy bot through the real `tickBot`: perTradeUsd sizing + custom stop
+firing; `leaderboard`, `discover`, `follow`), e2e (`copy-routes` — the new HTTP routes + icon
+allowlist + route-ordering over the real Express app). Added **GitHub Actions CI** (`.github/
+workflows/ci.yml`) pinning `.nvmrc` Node so the suite can't silently false-fail on the wrong version.
+
+**Known limitation (documented, not a blocker):** without `COINGECKO_API_KEY`, the leaderboard's
+realized-P&L and discovery are intermittently rate-limited (shared CoinGecko free tier) and fall
+back to net-flow — fail-safe in direction (the engine refuses to trade on stale prices).

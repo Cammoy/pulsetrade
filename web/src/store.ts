@@ -60,7 +60,7 @@ interface AppState {
   tournamentOpen: boolean
   wizardOpen: boolean
   moreOpen: boolean
-  view: 'home' | 'market' | 'smart' | 'portfolio' | 'docs'
+  view: 'home' | 'market' | 'smart' | 'copy' | 'portfolio' | 'docs'
   /** Which Portfolio sub-tab is active — lifted into the store so other surfaces
    *  (e.g. the "Staking" app entry) can deep-link straight to it. */
   portfolioTab: 'holdings' | 'wallet' | 'staking' | 'withdraw'
@@ -87,7 +87,7 @@ interface AppState {
   openAi(open: boolean): void
   openTournament(open: boolean): void
   openMore(open: boolean): void
-  setView(view: 'home' | 'market' | 'smart' | 'portfolio' | 'docs'): void
+  setView(view: 'home' | 'market' | 'smart' | 'copy' | 'portfolio' | 'docs'): void
   setPortfolioTab(tab: 'holdings' | 'wallet' | 'staking' | 'withdraw'): void
   selectBot(id: string | null): void
   createBot(payload: object): Promise<{ error?: string; id?: string }>

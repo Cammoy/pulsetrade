@@ -17,11 +17,13 @@ import { addLot, addSell, editLot, removeLot, removeSell, removeAsset, valueTrac
 import { backtest, profitFinder } from './backtest.js'
 import { liveReady, botWalletAddress, evmSigner, swapPrice0x, executeSwapGeneral, tokenInfo, swapBalance, lifiQuote, executeCrossChainEvm, LIFI_SOLANA_CHAIN } from './live.js'
 import { tokenList } from './tokens-list.js'
+import { iconProxy } from './icons.js'
 import { spot } from './prices.js'
 import { solanaLiveReady, solanaWalletAddress, solanaSigner, jupiterQuote, splTokenInfo, splTokenBalanceBaseUnits, executeSolanaSwap, executeCrossChainSolana, SOL_MINT } from './live-solana.js'
 import { screenToken, screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
-import { listWallets, addWallet, removeWallet, smartMoneyFeed, walletProfile, trackingReady, tokensForCopyTrade, gatherConsensusHoldings } from './smartmoney.js'
+import { listWallets, addWallet, removeWallet, smartMoneyFeed, walletProfile, trackingReady, tokensForCopyTrade, gatherConsensusHoldings, smartMoneyLeaderboard } from './smartmoney.js'
+import { getDiscovered } from './discover.js'
 import { EVM_ADDR, CG_ID, isKnownAddress } from './validators.js'
 import { smartMoneyIntelligence } from './smart-insights.js'
 import { aiReady } from './ai-trader.js'
@@ -245,6 +247,10 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
     return (amt * ratio * 10n ** BigInt(bm.decimals)) / (10n ** BigInt(sm.decimals) * 1_000_000_000n)
   }
 
+  // Cached coin-icon proxy — long browser cache + a shared server cache, so icons aren't
+  // re-fetched each load (revalidated when they occasionally change). Allowlisted hosts only.
+  app.get('/api/icon', (req, res) => { void iconProxy(req, res) })
+
   // Comprehensive per-network token list for the swap picker (CoinGecko-sourced, cached).
   app.get('/api/swap/tokens/:network', ah(async (req, res) => {
     const net = swapNet(req.params.network)
@@ -448,6 +454,14 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
   app.get('/api/smart-money/consensus-holdings', ah(async (_req, res) => {
     res.json(await gatherConsensusHoldings())
   }))
+
+  // Copy-worthiness ranking of every tracked wallet — registered before /:network.
+  app.get('/api/smart-money/leaderboard', ah(async (_req, res) => {
+    res.json(await smartMoneyLeaderboard())
+  }))
+
+  // Discover copy-worthy traders we don't track yet (background crawl) — before /:network.
+  app.get('/api/smart-money/discover', (_req, res) => res.json(getDiscovered()))
 
   app.get('/api/smart-money/:network', ah(async (req, res) => {
     res.json(await smartMoneyFeed(req.params.network))

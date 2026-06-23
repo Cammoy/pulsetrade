@@ -30,6 +30,7 @@ const VIEWS = [
   { v: 'portfolio', label: 'portfolio', icon: '💼' },
   { v: 'market', label: 'market', icon: '📈' },
   { v: 'smart', label: 'smart-money', icon: '🐋' },
+  { v: 'copy', label: 'copy-trade', icon: '🔁' },
 ] as const
 
 const COLLAPSE_KEY = 'pulsetrade.sidebar.collapsed'

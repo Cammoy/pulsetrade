@@ -1,27 +1,23 @@
-// External research links for a token, by network + contract address.
-// CoinGecko & CoinMarketCap resolve by contract on supported chains; DexScreener
-// and the block explorer work universally (best for brand-new tokens).
+// External research links for a token, by network + contract ADDRESS (no CoinGecko id needed):
+// GeckoTerminal (CoinGecko's on-chain explorer), DexScreener, and the block explorer. All three
+// resolve directly from the token address. Keep the slug maps in sync with the server's networks.ts.
+//
+// (Dropped the old CoinGecko `/coins/{platform}/contract/{addr}` link — that web route 404s — and
+// CoinMarketCap DexScan, which 302-redirected to a moved host and is redundant with the two
+// on-chain explorers here.)
 
 import { explorerTokenUrl } from './explorer'
 
-// Maps key by the SERVER network id (BNB Chain = 'bnb') → each provider's own slug. These
-// were keyed 'bsc' before, so every BNB research link silently failed to render.
-const CG_PLATFORM: Record<string, string> = {
-  ethereum: 'ethereum',
-  base: 'base',
-  arbitrum: 'arbitrum-one',
-  optimism: 'optimistic-ethereum',
-  polygon: 'polygon-pos',
-  bnb: 'binance-smart-chain',
-}
-const CMC_CHAIN: Record<string, string> = {
-  ethereum: 'ethereum',
+// network id → GeckoTerminal network slug (mirrors server networks.ts `gt`).
+const GT_CHAIN: Record<string, string> = {
+  ethereum: 'eth',
   base: 'base',
   arbitrum: 'arbitrum',
   optimism: 'optimism',
-  polygon: 'polygon',
-  bnb: 'bnb',
+  polygon: 'polygon_pos',
+  bnb: 'bsc',
 }
+// network id → DexScreener chain slug.
 const DEX_CHAIN: Record<string, string> = {
   ethereum: 'ethereum',
   base: 'base',
@@ -40,8 +36,7 @@ export interface CoinLink {
 export function coinLinks(network: string, address: string): CoinLink[] {
   const a = address.toLowerCase()
   const links: CoinLink[] = []
-  if (CG_PLATFORM[network]) links.push({ label: 'CoinGecko', icon: '🦎', url: `https://www.coingecko.com/en/coins/${CG_PLATFORM[network]}/contract/${a}` })
-  if (CMC_CHAIN[network]) links.push({ label: 'CoinMarketCap', icon: '📈', url: `https://coinmarketcap.com/dexscan/${CMC_CHAIN[network]}/${a}/` })
+  if (GT_CHAIN[network]) links.push({ label: 'GeckoTerminal', icon: '🦎', url: `https://www.geckoterminal.com/${GT_CHAIN[network]}/tokens/${a}` })
   if (DEX_CHAIN[network]) links.push({ label: 'DexScreener', icon: '📊', url: `https://dexscreener.com/${DEX_CHAIN[network]}/${a}` })
   const ex = explorerTokenUrl(network, a)
   if (ex) links.push({ label: 'Explorer', icon: '🔍', url: ex })

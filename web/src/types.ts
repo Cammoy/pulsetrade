@@ -238,6 +238,7 @@ export interface WalletTokenStat {
   volumeUsd: number
   netFlowUsd: number
   lastTs: number
+  priced: boolean // false ⇒ unlisted token, USD value unknown (show "—", not $0)
 }
 
 export interface WalletStats {
@@ -255,7 +256,9 @@ export interface WalletStats {
 export interface WalletScore {
   score: number
   tier: 'proven' | 'promising' | 'unproven' | 'thin'
+  basis: 'realized-pnl' | 'flow'
   realizedFlowUsd: number
+  realizedPnlUsd: number | null
   roundTrips: number
   recencyDays: number | null
   caveat: string
@@ -283,9 +286,43 @@ export interface Follow {
   maxConcurrent: number
   risk: string
   sweepTo?: 'native' | 'usdt'
+  stopLossPct?: number
+  takeProfitPct?: number
   enabled: boolean
   startedAt: number
   stats: { active: number; completed: number; realizedUsd: number; sweptUsd: number; wins: number; losses: number }
+}
+
+/** One wallet's copy-worthiness ranking row (GET /api/smart-money/leaderboard). */
+export interface LeaderboardRow {
+  address: string
+  label: string
+  category?: string
+  note?: string
+  score: number
+  tier: 'proven' | 'promising' | 'unproven' | 'thin'
+  basis: 'realized-pnl' | 'flow'
+  realizedFlowUsd: number
+  realizedPnlUsd: number | null
+  roundTrips: number
+  recencyDays: number | null
+  trades: number
+  netFlowUsd: number
+  lastTs: number | null
+  series: number[]
+  topTokens: { network: string; token: string }[]
+}
+
+/** A copy-worthy wallet discovered on-chain (GET /api/smart-money/discover), verified by realized P&L. */
+export interface DiscoveredTrader {
+  address: string
+  score: number
+  tier: 'proven' | 'promising' | 'unproven' | 'thin'
+  realizedPnlUsd: number
+  roundTrips: number
+  recencyDays: number | null
+  trades: number
+  viaTokens: { network: string; token: string }[]
 }
 
 export interface TournamentStanding {
@@ -329,9 +366,10 @@ export interface Bot {
   schedule: { enabled: boolean; days: number[]; startHour: number; endHour: number }
   pool?: { poolAddress: string; tokenAddress: string; decimals: number }
   sniper?: { takeProfitPct: number; stopLossPct: number; maxHoldMin: number; trailingPct?: number }
-  copy?: { walletAddress: string; walletLabel: string }
+  copy?: { walletAddress: string; walletLabel: string; perTradeUsd?: number; stopLossPct?: number; takeProfitPct?: number }
   ai?: boolean
   tournamentId?: string
+  followId?: string // set ⇒ this bot was spawned by an auto-follow pool
   cg?: string
   sweepTo?: 'native' | 'usdt'
   archived?: boolean

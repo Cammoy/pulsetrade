@@ -10,7 +10,7 @@
 
 import { state, save, type TrackedWallet } from './store.js'
 import { networkById, tokenOf, NETWORKS } from './networks.js'
-import { spot, getSpotPrices, tokenLiquidityUsd } from './prices.js'
+import { spot, getSpotPrices, tokenLiquidityUsd, historicalSeries, priceAt } from './prices.js'
 import { ttlCache } from './ttl-cache.js'
 
 export const trackingReady = () => Boolean(process.env.ETHERSCAN_API_KEY)
@@ -56,7 +56,7 @@ const STABLE_SYMBOLS = new Set([
  *  majors (WETH, WBTC, stETH, …) and stablecoins. A whale holding WETH or parking in USDC
  *  is noise, not a play — these are excluded from the consensus / accumulation signals
  *  (the raw activity feed still shows them). [accum-filter] */
-const isSignalToken = (symbol: string): boolean => {
+export const isSignalToken = (symbol: string): boolean => {
   const s = symbol.toUpperCase()
   return !KNOWN_MAJOR_SYMBOLS.has(s) && !STABLE_SYMBOLS.has(s)
 }
@@ -216,6 +216,14 @@ interface RawTransfer {
 const TX_TTL = 60_000
 const txCache = ttlCache<RawTransfer[]>(TX_TTL)
 
+// Etherscan V2's FREE tier is Ethereum-mainnet-only — L2 token-transfer queries (Base, Arbitrum,
+// …) return a "not supported for this chain" NOTOK. We track that so the UI can say "L2 tracking +
+// discovery need a paid Etherscan plan" instead of silently showing empty L2 data / no traders.
+let etherscanChainBlocked = false
+export const etherscanChainLimited = (): boolean => etherscanChainBlocked
+export const markEtherscanChainLimited = (): void => { etherscanChainBlocked = true }
+const chainUnsupported = (result: unknown): boolean => typeof result === 'string' && /not supported for this chain/i.test(result)
+
 async function fetchTransfers(chainId: number, wallet: string): Promise<RawTransfer[] | null> {
   if (!trackingReady()) return null
   const key = `${chainId}:${wallet.toLowerCase()}`
@@ -227,6 +235,7 @@ async function fetchTransfers(chainId: number, wallet: string): Promise<RawTrans
     const res = await fetch(url)
     if (!res.ok) return txCache.stale(key) ?? null
     const data: any = await res.json()
+    if (chainUnsupported(data?.result)) markEtherscanChainLimited() // free tier → this L2 is dark
     const rows: RawTransfer[] = Array.isArray(data?.result) ? data.result : []
     return txCache.set(key, rows)
   } catch {
@@ -585,6 +594,7 @@ export interface WalletTokenStat {
   volumeUsd: number
   netFlowUsd: number // buys − sells (USD value, where priced)
   lastTs: number
+  priced: boolean // false ⇒ no USD value available (unlisted token) → volume/net are unknown, not 0
 }
 
 export interface WalletStats {
@@ -621,7 +631,7 @@ export function computeWalletStats(events: SmartMoneyEvent[]): WalletStats {
     volume += usd
     series.push({ t: e.ts, v: +net.toFixed(2) })
     const key = `${e.network}:${e.token}`
-    const t = byTok.get(key) ?? { network: e.network, token: e.token, buys: 0, sells: 0, volumeUsd: 0, netFlowUsd: 0, lastTs: 0 }
+    const t = byTok.get(key) ?? { network: e.network, token: e.token, buys: 0, sells: 0, volumeUsd: 0, netFlowUsd: 0, lastTs: 0, priced: false }
     if (e.side === 'buy') {
       t.buys++
       t.netFlowUsd += usd
@@ -630,6 +640,7 @@ export function computeWalletStats(events: SmartMoneyEvent[]): WalletStats {
       t.netFlowUsd -= usd
     }
     t.volumeUsd += usd
+    if (e.usd != null) t.priced = true // we had a real USD value for at least one trade of this token
     t.lastTs = Math.max(t.lastTs, e.ts)
     byTok.set(key, t)
   }
@@ -649,10 +660,101 @@ export function computeWalletStats(events: SmartMoneyEvent[]): WalletStats {
   }
 }
 
+// ── True realized P&L (on-chain cost-basis reconstruction) ───────────────────
+// The flow proxy (sells$ − buys$ at CURRENT spot) measures net distribution, not profit. True
+// realized P&L re-prices each transfer at its HISTORICAL price (daily series) and runs an
+// average-cost cost basis per token. Honest by construction: a sell with no observed prior buy
+// (orphan — its basis is off-window) carries no cost and is excluded; tokens we can't price are
+// reported separately. Still excludes still-held bags, gas/slippage fees, and >1y-old history.
+
+export interface RealizedPnl {
+  realizedUsd: number
+  roundTrips: number // distinct tokens with ≥1 cost-basis-matched sell
+  wins: number
+  losses: number
+  pricedTokens: number // round-tripped tokens we could value historically
+  unpricedTokens: number // round-tripped tokens with no cg id / no history
+}
+
+const cgIdFor = (network: string, token: string): string | undefined => tokenOf(network, token)?.cg
+
+/** Average-cost realized P&L from ONE token's chronological priced lots. Orphan sells (no
+ *  observed prior buy in-window) carry no basis and are skipped — conservative + honest. Pure. */
+export function realizedFromLots(lots: { side: 'buy' | 'sell'; qty: number; px: number; ts: number }[]): { realizedUsd: number; matchedSells: number; wins: number; losses: number } {
+  const asc = [...lots].sort((a, b) => a.ts - b.ts)
+  let qty = 0
+  let cost = 0
+  let realized = 0
+  let matchedSells = 0
+  let wins = 0
+  let losses = 0
+  for (const l of asc) {
+    if (l.side === 'buy') {
+      qty += l.qty
+      cost += l.qty * l.px
+      continue
+    }
+    if (qty <= 1e-12) continue // orphan sell — no cost basis to realise against
+    const sold = Math.min(l.qty, qty)
+    const avg = cost / qty
+    const pnl = sold * (l.px - avg)
+    realized += pnl
+    cost -= sold * avg
+    qty -= sold
+    matchedSells++
+    if (pnl > 0.01) wins++
+    else if (pnl < -0.01) losses++
+  }
+  return { realizedUsd: +realized.toFixed(2), matchedSells, wins, losses }
+}
+
+/** Reconstruct a wallet's true realized P&L across its round-tripped, priceable tokens. Fetches
+ *  a historical daily price series per round-tripped token (cached/deduped). Only fetches tokens
+ *  that have BOTH a buy and a sell — there's no realized P&L to compute otherwise. */
+export async function computeRealizedPnl(events: SmartMoneyEvent[]): Promise<RealizedPnl> {
+  const byTok = new Map<string, SmartMoneyEvent[]>()
+  for (const e of events) {
+    const arr = byTok.get(`${e.network}:${e.token}`)
+    if (arr) arr.push(e)
+    else byTok.set(`${e.network}:${e.token}`, [e])
+  }
+  let realizedUsd = 0
+  let roundTrips = 0
+  let wins = 0
+  let losses = 0
+  let pricedTokens = 0
+  let unpricedTokens = 0
+  for (const evs of byTok.values()) {
+    if (!evs.some((e) => e.side === 'buy') || !evs.some((e) => e.side === 'sell')) continue // not round-tripped
+    const cg = cgIdFor(evs[0].network, evs[0].token)
+    if (!cg) {
+      unpricedTokens++
+      continue
+    }
+    const series = await historicalSeries(cg)
+    const lots = evs
+      .map((e) => ({ side: e.side, qty: e.qty, px: priceAt(series, e.ts), ts: e.ts }))
+      .filter((l): l is { side: 'buy' | 'sell'; qty: number; px: number; ts: number } => l.px != null)
+    if (lots.length < 2) {
+      unpricedTokens++
+      continue
+    }
+    pricedTokens++
+    const r = realizedFromLots(lots)
+    realizedUsd += r.realizedUsd
+    wins += r.wins
+    losses += r.losses
+    if (r.matchedSells > 0) roundTrips++
+  }
+  return { realizedUsd: +realizedUsd.toFixed(2), roundTrips, wins, losses, pricedTokens, unpricedTokens }
+}
+
 export interface WalletScore {
   score: number // 0-100 heuristic
   tier: 'proven' | 'promising' | 'unproven' | 'thin'
-  realizedFlowUsd: number // approx cash extracted from round-tripped tokens (sells − buys)
+  basis: 'realized-pnl' | 'flow' // which profit signal scored this wallet
+  realizedFlowUsd: number // approx cash extracted from round-tripped tokens (sells − buys), spot-priced
+  realizedPnlUsd: number | null // TRUE cost-basis realized P&L (null ⇒ couldn't price → flow used)
   roundTrips: number // tokens with BOTH a buy and a sell (a closed/partly-closed position)
   recencyDays: number | null
   caveat: string
@@ -660,31 +762,39 @@ export interface WalletScore {
 
 const SCORE_CAVEAT =
   'Heuristic from on-chain transfer FLOW (cash out − cash in on round-tripped tokens), NOT true realized PnL — it ignores still-held bags, unpriced transfers, fees, and off-chain context. A high score is a research starting point, not proof of skill or a guarantee.'
+const REALIZED_CAVEAT =
+  'True realized P&L reconstructed from on-chain transfers using an average-cost basis at daily-historical prices. It still excludes still-held bags, trading fees/gas, tokens we can’t price, and any history older than ~1y. A research signal, not audited performance.'
 
-/** Score a tracked wallet's COPY-WORTHINESS from its transfer flow. Honest by construction:
- *  it rewards persistence (many round trips, not one lucky hit) + recency + a positive net
- *  realized FLOW, caps net-losers low, and carries a loud caveat that this is a flow proxy,
- *  not verified PnL. Copy-trading is a borrowed edge — only as good as the wallet you copy. */
-export function computeWalletScore(stats: WalletStats, now = Date.now()): WalletScore {
+/** Score a tracked wallet's COPY-WORTHINESS. When a cost-basis `realized` P&L is supplied it scores
+ *  on TRUE realized profit; otherwise it falls back to the spot-priced flow proxy. Either way it
+ *  rewards persistence (many round trips, not one lucky hit) + recency + a positive result, caps
+ *  net-losers low, and carries a loud caveat. Copy-trading is only as good as the wallet you copy. */
+export function computeWalletScore(stats: WalletStats, now = Date.now(), realized?: RealizedPnl): WalletScore {
   const roundTripTokens = stats.tokens.filter((t) => t.buys > 0 && t.sells > 0)
-  const roundTrips = roundTripTokens.length
   // −netFlow = sells − buys: positive ⇒ extracted more cash than deployed on closed names.
   const realizedFlowUsd = +roundTripTokens.reduce((s, t) => s - t.netFlowUsd, 0).toFixed(2)
   const recencyDays = stats.lastTs ? +Math.max(0, (now - stats.lastTs) / 86_400_000).toFixed(1) : null
+  // Profit signal + round-trip count: prefer TRUE realized P&L when we could compute it.
+  const usingRealized = !!realized
+  const profitUsd = realized ? realized.realizedUsd : realizedFlowUsd
+  const roundTrips = realized ? realized.roundTrips : roundTripTokens.length
+  const realizedPnlUsd = realized ? realized.realizedUsd : null
+  const basis: WalletScore['basis'] = usingRealized ? 'realized-pnl' : 'flow'
+  const caveat = usingRealized ? REALIZED_CAVEAT : SCORE_CAVEAT
   if (stats.trades < 3 || roundTrips < 1 || recencyDays === null)
-    return { score: 0, tier: 'thin', realizedFlowUsd, roundTrips, recencyDays, caveat: SCORE_CAVEAT }
-  const profitable = realizedFlowUsd > 0
+    return { score: 0, tier: 'thin', basis, realizedFlowUsd, realizedPnlUsd, roundTrips, recencyDays, caveat }
+  const profitable = profitUsd > 0
   const persistence = Math.min(1, roundTrips / 5) // ≥5 closed positions = full marks
   const recency = recencyDays <= 7 ? 1 : recencyDays <= 30 ? 0.6 : recencyDays <= 90 ? 0.3 : 0.1
   const diversity = Math.min(1, stats.tokens.length / 4)
-  const magnitude = Math.min(1, Math.abs(realizedFlowUsd) / 10_000) // ~$10k extracted = full marks
+  const magnitude = Math.min(1, Math.abs(profitUsd) / 10_000) // ~$10k = full marks
   const raw = profitable
     ? 100 * (0.45 * persistence + 0.2 * recency + 0.15 * diversity + 0.2 * magnitude)
     : 100 * (0.1 * recency + 0.1 * diversity)
   const score = Math.round(profitable ? raw : Math.min(raw, 25)) // a net-loser can never score high
   const tier: WalletScore['tier'] =
     profitable && roundTrips >= 5 && recencyDays <= 30 ? 'proven' : profitable && roundTrips >= 2 ? 'promising' : 'unproven'
-  return { score, tier, realizedFlowUsd, roundTrips, recencyDays, caveat: SCORE_CAVEAT }
+  return { score, tier, basis, realizedFlowUsd, realizedPnlUsd, roundTrips, recencyDays, caveat }
 }
 
 // Chains scanned for a wallet's full activity/holdings. Ethereum MAINNET (chainId
@@ -730,6 +840,9 @@ export async function walletProfile(address: string): Promise<{
   // the rest qty-only) so holdings and activity are complete, not just curated.
   const events = await walletEvents(address, { allTokens: true })
   const stats = computeWalletStats(events)
+  // True realized P&L from cost-basis reconstruction; fall back to the flow proxy if nothing
+  // could be priced historically (rate-limited / unlisted tokens) so the score is never empty.
+  const realized = await computeRealizedPnl(events)
   // Holdings shown in the profile drop DEAD bags: no activity in months (free) and, for the
   // top positions, a confirmed near-zero DEX pool (rug-pulled). Recency-survivors beyond the
   // liquidity-check cap are kept (recent activity ⇒ almost certainly still alive). [dead-token]
@@ -745,7 +858,7 @@ export async function walletProfile(address: string): Promise<{
     events: events.slice(0, 200),
     holdings,
     stats,
-    score: computeWalletScore(stats),
+    score: computeWalletScore(stats, now, realized.pricedTokens > 0 ? realized : undefined),
   }
 }
 
@@ -753,4 +866,82 @@ export async function walletProfile(address: string): Promise<{
 export async function walletRecentBuys(address: string, sinceTs: number): Promise<SmartMoneyEvent[]> {
   const events = await walletEvents(address)
   return events.filter((e) => e.side === 'buy' && e.ts > sinceTs)
+}
+
+// ── Copy-worthiness leaderboard ──────────────────────────────────────────────
+// Ranks EVERY tracked wallet by the same flow-based copy-worthiness score the wallet
+// profile shows, so the Copy Trading hub can answer "who is worth copying?" up front.
+// Reuses the pure stats/score functions; carries the same loud caveat (flow ≠ true PnL).
+
+export interface LeaderboardRow {
+  address: string
+  label: string
+  category?: string
+  note?: string
+  score: number
+  tier: WalletScore['tier']
+  basis: WalletScore['basis'] // 'realized-pnl' (cost-basis) or 'flow' (fallback)
+  realizedFlowUsd: number
+  realizedPnlUsd: number | null // true cost-basis P&L (null when only flow was available)
+  roundTrips: number
+  recencyDays: number | null
+  trades: number
+  netFlowUsd: number
+  lastTs: number | null
+  series: number[] // cumulative-flow sparkline (downsampled, oldest→newest)
+  topTokens: { network: string; token: string }[] // a few signal tokens they trade
+}
+
+/** Evenly downsample a series to at most `max` points (keeps first + last). */
+function downsampleSeries(series: { v: number }[], max: number): number[] {
+  const vals = series.map((p) => p.v)
+  if (vals.length <= max) return vals
+  const step = (vals.length - 1) / (max - 1)
+  return Array.from({ length: max }, (_, i) => vals[Math.round(i * step)])
+}
+
+let leaderboardCache: { at: number; rows: LeaderboardRow[] } | null = null
+const LEADERBOARD_TTL = 10 * 60_000 // 10 min — same wallet fetches as consensus; scores move slowly
+
+/** Score + rank all tracked wallets by copy-worthiness. Cached 10 min (same per-wallet
+ *  Etherscan fetches as the consensus view). Returns `needsKey` when tracking is off. */
+export async function smartMoneyLeaderboard(now = Date.now()): Promise<{ rows: LeaderboardRow[]; needsKey: boolean; totalWallets: number; caveat: string }> {
+  ensureSeeded()
+  const totalWallets = listWallets().length
+  if (!trackingReady()) return { rows: [], needsKey: true, totalWallets, caveat: SCORE_CAVEAT }
+  if (leaderboardCache && now - leaderboardCache.at < LEADERBOARD_TTL)
+    return { rows: leaderboardCache.rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT }
+  // Warm mainnet majors so USD-valued flow (and thus realized-flow) is populated.
+  await getSpotPrices(MAINNET_CG_IDS).catch(() => {})
+  const rows: LeaderboardRow[] = []
+  for (const w of listWallets()) {
+    const events = await walletEvents(w.address, { allTokens: true }).catch(() => [])
+    const stats = computeWalletStats(events)
+    // True cost-basis realized P&L; fall back to the flow proxy when nothing could be priced.
+    const realized = await computeRealizedPnl(events).catch(() => null)
+    const score = computeWalletScore(stats, now, realized && realized.pricedTokens > 0 ? realized : undefined)
+    rows.push({
+      address: w.address,
+      label: w.label,
+      category: w.category,
+      note: w.note,
+      score: score.score,
+      tier: score.tier,
+      basis: score.basis,
+      realizedFlowUsd: score.realizedFlowUsd,
+      realizedPnlUsd: score.realizedPnlUsd,
+      roundTrips: score.roundTrips,
+      recencyDays: score.recencyDays,
+      trades: stats.trades,
+      netFlowUsd: stats.netFlowUsd,
+      lastTs: stats.lastTs,
+      series: downsampleSeries(stats.series, 48),
+      topTokens: stats.tokens.filter((t) => isSignalToken(t.token)).slice(0, 3).map((t) => ({ network: t.network, token: t.token })),
+    })
+  }
+  // Best first: score, then the scored profit signal (realized P&L if present, else flow), then recency.
+  const signal = (r: LeaderboardRow) => r.realizedPnlUsd ?? r.realizedFlowUsd
+  rows.sort((a, b) => b.score - a.score || signal(b) - signal(a) || (b.lastTs ?? 0) - (a.lastTs ?? 0))
+  leaderboardCache = { at: now, rows }
+  return { rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT }
 }

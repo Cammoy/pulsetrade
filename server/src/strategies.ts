@@ -295,7 +295,7 @@ const copytrade: Strategy = {
   name: 'Copy Trade',
   tagline: 'Follow smart money',
   description:
-    'Mirrors a tracked wallet: when that wallet buys this token, the bot buys; when it sells, the bot sells its position. Sized to the bot budget and risk tier.',
+    'Mirrors a tracked wallet: when that wallet buys this token, the bot buys; when it sells, the bot exits — so you ride their full move rather than capping it at a tier take-profit. Stop-loss and take-profit are optional safety nets you can add per copy.',
   decide(ctx) {
     const guard = slTp(ctx)
     if (guard) return guard
@@ -305,7 +305,9 @@ const copytrade: Strategy = {
     ctx.state.lastCopiedTx = sig.txHash
     if (sig.side === 'buy') {
       if (ctx.position.qty > 0) return null
-      const usd = Math.min((ctx.budgetUsd * ctx.params.positionPct) / 100, ctx.cashUsd)
+      // Per-entry size: a fixed override (copy control) if set, else the risk tier's %.
+      const sizeUsd = ctx.params.perTradeUsd && ctx.params.perTradeUsd > 0 ? ctx.params.perTradeUsd : (ctx.budgetUsd * ctx.params.positionPct) / 100
+      const usd = Math.min(sizeUsd, ctx.cashUsd)
       if (usd > 1) return { type: 'buy', usd, reason: 'Smart money bought — copying entry' }
     } else if (ctx.position.qty > 0) {
       return { type: 'sell', fraction: 1, reason: 'Smart money sold — copying exit', exit: true }

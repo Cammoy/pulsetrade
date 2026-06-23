@@ -6,7 +6,7 @@ import path from 'node:path'
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-sm-'))
 
-const { mapTransfers, latestActionForToken, ensureSeeded, listWallets, walletTokenSignal, smartMoneyFeed, computeWalletScore } = await import('../src/smartmoney.js')
+const { mapTransfers, latestActionForToken, ensureSeeded, listWallets, walletTokenSignal, smartMoneyFeed, computeWalletScore, computeWalletStats } = await import('../src/smartmoney.js')
 const { state } = await import('../src/store.js')
 const { tokenOf } = await import('../src/networks.js')
 
@@ -240,6 +240,20 @@ test('computeHoldings: flags scam-airdrop symbols (URLs, claim/reward, unicode) 
 
 // ── #2 copy-trade wallet scoring: honest, persistence-weighted, net-losers capped ──
 const NOW = 1_800_000_000_000
+test('computeWalletStats: per-token priced flag separates valued tokens from unlisted ones', () => {
+  const ev = (token: string, side: 'buy' | 'sell', usd: number | null) => ({ wallet: '0x', label: 'W', network: 'base', token, tokenAddress: '0x', side, qty: 1, usd, ts: NOW, txHash: `0x${token}${side}`, curated: true })
+  const s = computeWalletStats([ev('AERO', 'buy', 100), ev('AERO', 'sell', 150), ev('JUNK', 'buy', null), ev('JUNK', 'sell', null)])
+  const aero = s.tokens.find((t: any) => t.token === 'AERO')!
+  const junk = s.tokens.find((t: any) => t.token === 'JUNK')!
+  assert.equal(aero.priced, true)
+  assert.equal(aero.volumeUsd, 250)
+  assert.equal(aero.netFlowUsd, -50) // 100 bought − 150 sold
+  assert.equal(junk.priced, false) // no USD value → "—" in the UI, not $0
+  assert.equal(junk.volumeUsd, 0)
+  assert.equal(junk.buys, 1) // trade COUNTS are still complete
+  assert.equal(junk.sells, 1)
+})
+
 const mkStats = (over: Partial<any>): any => ({ trades: 10, buys: 5, sells: 5, volumeUsd: 1000, netFlowUsd: 0, firstTs: 0, lastTs: NOW, tokens: [], series: [], ...over })
 const tok = (token: string, netFlowUsd: number) => ({ network: 'base', token, buys: 2, sells: 2, volumeUsd: 1000, netFlowUsd, lastTs: NOW })
 

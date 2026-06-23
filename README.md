@@ -59,7 +59,7 @@ The **same `decide()` code** runs in backtests and live trading. Risk tolerance 
 | 🎚️ **Momentum Factor** | *Buys strength, trails the winners* | Strong trends | Time-series momentum with vol-targeted sizing + an asymmetric trailing ratchet. |
 | 💵 **Smart DCA** | *Accumulate dips, exit in profit* | Accumulation | Scheduled slices below the 24h average — with a 50h downtrend filter so it never martingales into a dying token. |
 | 🎯 **Sniper** | *Instant entry, take the stake back, ride the runner* | Fresh launches | One-shot entry behind a mandatory safety screen; recovers the stake, then trails the runner. |
-| 🐋 **Copy-trade** | *Follow smart money* | — | Mirrors a tracked wallet's flow in one token. |
+| 🐋 **Copy-trade** | *Follow smart money* | — | Mirrors a tracked wallet: buys when they buy, exits when they sell — riding the full move (no take-profit cap). Per-trade size + optional SL/TP; a catastrophic stop guards live copies. |
 | 🤖 **AI Trader** | *Gemini decides* | — | Google Gemini reads price action/RSI/MAs → BUY/SELL/HOLD, sized by confidence. |
 
 ## 🌐 Networks
@@ -111,6 +111,12 @@ Five cheap EVM chains + **Solana** + the **Internet Computer**. One EVM wallet w
 **🛡️ Pre-trade screening**
 - Every token scored 0–100 via **GoPlus + honeypot.is** (honeypots, non-sellable, rug setups, tax traps, owner controls)
 - Hard, no-override block for the Sniper
+
+**🔁 Copy Trading** *(dedicated channel)*
+- **Copy-worthiness leaderboard** — every tracked wallet ranked by **true realized P&L** (on-chain cost-basis) when `COINGECKO_API_KEY` is set; net-flow fallback otherwise (shown as a "degraded" hint)
+- **Discover** — a background crawl that finds profitable round-trippers of curated tokens you *don't* track yet, verified by realized P&L
+- **Guided setup + live preview** — single-token copy *or* auto-follow; per-trade size + optional SL/TP. Copies **mirror** the wallet (exit when they sell); a catastrophic stop auto-guards **live** copies
+- Click any wallet for a full analysis — net-flow chart, holdings/allocation, per-token flow, recent trades
 
 **🏆 Extras**
 - **Tournaments**: 2–12 bots, equal budget, live leaderboard + podium
@@ -198,7 +204,9 @@ server/  Express + WebSocket engine (Node ≥22.5, tsx)
   src/risk-screen.ts   pure 0–100 risk scorer (rug/honeypot/exploit flags)
   src/screen-fetch.ts  GoPlus + honeypot.is fetch wrapper, cached
   src/sniper.ts        GeckoTerminal new/trending pool discovery + safe-only filter
-  src/smartmoney.ts    watchlist + Etherscan v2 flow + consensus/accumulation signals
+  src/smartmoney.ts    watchlist + Etherscan v2 flow + consensus/accumulation + realized-P&L scoring + leaderboard
+  src/discover.ts      copy-trader discovery: crawl curated-token buyers → verify by realized P&L
+  src/icons.ts         cached, allowlisted coin-icon proxy (/api/icon)
   src/live.ts          0x v2 EVM execution + LI.FI bridge (bounded approvals, route allowlist)
   src/live-solana.ts   Jupiter Solana execution
   src/live-turnkey.ts  Turnkey signing (keys never leave Turnkey)
@@ -226,11 +234,11 @@ cd web && npx vitest run                              # 74 web tests
 
 Copy `server/.env.example` → `server/.env`. Everything is optional in paper mode. Key groups:
 
-- **Market data** — `COINGECKO_API_KEY` (recommended; eases rate-limit backoff)
+- **Market data** — `COINGECKO_API_KEY` (recommended; eases rate-limit backoff **and powers Copy Trading's realized-P&L scoring + trader discovery** — without it those fall back to net-flow)
 - **Live EVM** — `ZEROX_API_KEY`, `BOT_WALLET_KEY` *or* `TURNKEY_*`
 - **Live Solana** — `SOLANA_WALLET_KEY` *or* Turnkey Solana
 - **Auth** — `ENGINE_TOKEN` (+ `VITE_ENGINE_TOKEN` for the web)
-- **Smart money** — `ETHERSCAN_API_KEY` (live feed; watchlist works without)
+- **Smart money** — `ETHERSCAN_API_KEY` (live feed; watchlist works without). ⚠ The **free** tier is Ethereum-mainnet-only — **L2 wallet tracking, copy-trade signals on tradeable L2s, and discovery need a paid multichain Etherscan plan** (the UI shows a "needs multichain" hint otherwise)
 - **AI** — `GEMINI_API_KEY` (free tier covers it)
 - **Safety caps & alerts** — see [Safety & risk controls](#-safety--risk-controls)
 

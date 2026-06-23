@@ -25,6 +25,7 @@ const VIEW_META = {
   portfolio: { hash: 'portfolio', topic: 'Everything in your wallet, by network and by asset' },
   market: { hash: 'market', topic: 'Live market regime, movers & signals across the majors' },
   smart: { hash: 'smart-money', topic: 'What tracked whales & smart-money wallets are buying and selling' },
+  copy: { hash: 'copy-trade', topic: 'Rank copy-worthy wallets, then mirror their trades automatically' },
   docs: { hash: 'docs', topic: 'How everything works — strategies, sniper, swap, going live & safety' },
 } as const
 
