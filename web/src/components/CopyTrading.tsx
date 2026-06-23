@@ -6,7 +6,7 @@ import { botsForMode } from '../stats'
 import { fmtUsd, fmtCompactUsd, fmtSign, pnlColor, shortAddr, timeAgo } from '../format'
 import Sparkline from './Sparkline'
 import WalletAccount from './WalletAccount'
-import type { Bot, Follow, LeaderboardRow } from '../types'
+import type { Bot, Follow, LeaderboardRow, DiscoveredTrader } from '../types'
 
 /**
  * Copy Trading — the hub for borrowing other wallets' edge. Three stacked surfaces:
@@ -56,6 +56,7 @@ export default function CopyTrading() {
   const [loading, setLoading] = useState(true)
   const [setup, setSetup] = useState<{ open: boolean; wallet: SetupTarget }>({ open: false, wallet: null })
   const [detail, setDetail] = useState<string | null>(null)
+  const [disc, setDisc] = useState<{ traders: DiscoveredTrader[]; discovering: boolean }>({ traders: [], discovering: false })
 
   const loadBoard = async () => {
     setLoading(true)
@@ -70,9 +71,25 @@ export default function CopyTrading() {
     }
     setLoading(false)
   }
+  const loadDiscover = async () => {
+    try {
+      const r = await fetch('/api/smart-money/discover')
+      const d = await r.json()
+      setDisc({ traders: d.traders ?? [], discovering: !!d.discovering })
+    } catch {
+      /* offline */
+    }
+  }
   useEffect(() => {
     loadBoard()
+    loadDiscover()
   }, [])
+  // The crawl runs in the background — poll until it settles so results appear without a refresh.
+  useEffect(() => {
+    if (!disc.discovering) return
+    const id = setInterval(loadDiscover, 12_000)
+    return () => clearInterval(id)
+  }, [disc.discovering])
 
   const copyBots = useMemo(() => botsForMode(bots, mode).filter((b) => b.copy), [bots, mode])
   const standalone = copyBots.filter((b) => !b.followId && b.status !== 'stopped')
@@ -100,6 +117,8 @@ export default function CopyTrading() {
       )}
 
       <ActiveCopies follows={follows} standalone={standalone} all={copyBots} mode={mode} notify={notify} refresh={refresh} control={control} remove={remove} onSelect={setDetail} />
+
+      <Discover traders={disc.traders} discovering={disc.discovering} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
 
       <Leaderboard rows={rows} loading={loading} caveat={caveat} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
 
@@ -296,6 +315,62 @@ function Leaderboard({ rows, loading, caveat, onCopy, onSelect }: { rows: Leader
         </div>
       )}
       {caveat && <p className="mt-3 text-[10.5px] leading-relaxed text-slate-600">⚠️ {caveat}</p>}
+    </Card>
+  )
+}
+
+// ── Discover (verified external traders) ─────────────────────────────────────
+function Discover({ traders, discovering, onCopy, onSelect }: { traders: DiscoveredTrader[]; discovering: boolean; onCopy: (w: { address: string; label: string }) => void; onSelect: (address: string) => void }) {
+  return (
+    <Card
+      title="🔭 Discover traders"
+      sub="Profitable round-trippers of copyable tokens — found on-chain, verified by realized P&L"
+      right={discovering ? <Spinner label="Scanning pools…" /> : undefined}
+    >
+      {traders.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-slate-500">
+          {discovering
+            ? 'Scanning curated pools for profitable traders — this runs in the background, results appear here in a minute.'
+            : 'No verified external traders in the latest scan. The crawl refreshes periodically.'}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {traders.map((t, i) => {
+            const tier = TIER[t.tier]
+            return (
+              <div key={t.address} className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 transition-colors hover:bg-white/[0.04]">
+                <span className="w-5 shrink-0 text-center text-sm font-bold tabular-nums text-slate-500">{i + 1}</span>
+                <button onClick={() => onSelect(t.address)} title="Analyse this wallet" className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                  <Avatar seed={t.address} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate font-mono text-sm font-semibold text-white hover:underline">{shortAddr(t.address)}</span>
+                      <span className={`chip ring-1 ${tier.chip}`}>{tier.label}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-white/[0.06]">
+                        <div className={`h-full rounded-full bg-gradient-to-r ${tier.bar}`} style={{ width: `${Math.max(3, t.score)}%` }} />
+                      </div>
+                      <span className="text-[11px] font-semibold tabular-nums text-slate-400">{t.score}/100</span>
+                      {t.viaTokens.length > 0 && (
+                        <span className="hidden items-center gap-1 sm:flex">
+                          <span className="text-slate-600">·</span>
+                          {t.viaTokens.slice(0, 3).map((v) => <span key={`${v.network}:${v.token}`} className="chip bg-white/[0.05] text-slate-400">{v.token}</span>)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+                <div className="hidden shrink-0 text-right sm:block">
+                  <div className={`text-xs font-semibold tabular-nums ${pnlColor(t.realizedPnlUsd)}`}>{fmtCompactUsd(t.realizedPnlUsd, { signed: true })}</div>
+                  <div className="text-[10px] text-slate-500">realized P&L</div>
+                </div>
+                <button className="btn-primary shrink-0 !px-3 !py-1.5 text-xs" onClick={() => onCopy({ address: t.address, label: shortAddr(t.address) })}>Copy</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </Card>
   )
 }

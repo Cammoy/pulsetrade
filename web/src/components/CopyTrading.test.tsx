@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import CopyTrading from './CopyTrading'
 import { useStore } from '../store'
-import type { Meta, LeaderboardRow } from '../types'
+import type { Meta, LeaderboardRow, DiscoveredTrader } from '../types'
 
 const META = {
   networks: [{ id: 'base', name: 'Base', color: '#3b82f6', native: { symbol: 'ETH' } }],
@@ -19,9 +19,12 @@ const row = (over: Partial<LeaderboardRow>): LeaderboardRow => ({
   realizedPnlUsd: 4200, roundTrips: 6, recencyDays: 2, trades: 30, netFlowUsd: 1000, lastTs: 1, series: [1, 2, 3], topTokens: [], ...over,
 })
 
-const board = (rows: LeaderboardRow[], needsKey = false) => {
-  globalThis.fetch = vi.fn(async () =>
-    new Response(JSON.stringify({ rows, needsKey, totalWallets: rows.length, caveat: 'flow is not verified PnL' }), { headers: { 'content-type': 'application/json' } })) as typeof fetch
+const json = (b: unknown) => new Response(JSON.stringify(b), { headers: { 'content-type': 'application/json' } })
+const board = (rows: LeaderboardRow[], needsKey = false, discover?: { traders: DiscoveredTrader[]; discovering: boolean }) => {
+  globalThis.fetch = vi.fn(async (url: unknown) =>
+    String(url).includes('/discover')
+      ? json(discover ?? { traders: [], discovering: false })
+      : json({ rows, needsKey, totalWallets: rows.length, caveat: 'flow is not verified PnL' })) as typeof fetch
 }
 
 describe('CopyTrading', () => {
@@ -86,5 +89,23 @@ describe('CopyTrading', () => {
     board([], true)
     render(<CopyTrading />)
     await waitFor(() => expect(document.body).toHaveTextContent(/Wallet tracking needs an Etherscan API key/i))
+  })
+
+  test('Discover lists verified external traders with a Copy action', async () => {
+    const trader: DiscoveredTrader = {
+      address: '0x' + 'd'.repeat(40), score: 71, tier: 'promising', realizedPnlUsd: 3400,
+      roundTrips: 4, recencyDays: 1, trades: 120, viaTokens: [{ network: 'base', token: 'AERO' }],
+    }
+    board([], false, { traders: [trader], discovering: false })
+    render(<CopyTrading />)
+    await waitFor(() => expect(screen.getByText('🔭 Discover traders')).toBeInTheDocument())
+    await waitFor(() => expect(document.body).toHaveTextContent(/realized P&L/i))
+    expect(document.body).toHaveTextContent(/AERO/) // the curated token it was found trading
+  })
+
+  test('Discover shows a background-scan state while the crawl runs', async () => {
+    board([], false, { traders: [], discovering: true })
+    render(<CopyTrading />)
+    await waitFor(() => expect(document.body).toHaveTextContent(/Scanning/i))
   })
 })

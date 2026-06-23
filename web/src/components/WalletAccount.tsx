@@ -200,13 +200,15 @@ export default function WalletAccount({ address, onClose }: { address: string; o
           })()}
 
           {s.tokens.length > 0 && (
-            <div className="overflow-x-auto rounded-xl border border-white/[0.08]">
-              <div className="px-3 pt-2 text-[10px] uppercase tracking-wider text-slate-500">Trading flow (curated tokens)</div>
-              <table className="w-full min-w-[440px] text-xs">
-                <thead className="bg-white/[0.02] text-left text-[10px] uppercase tracking-wider text-slate-500">
-                  <tr>{['Token', 'Net', 'Buys', 'Sells', 'Volume', 'Last'].map((h) => <th key={h} className="px-3 py-1.5 font-medium">{h}</th>)}</tr>
-                </thead>
-                <tbody>
+            <div className="rounded-xl border border-white/[0.08]">
+              <div className="px-3 pt-2 text-[10px] uppercase tracking-wider text-slate-500">Trading flow (curated tokens) · {s.tokens.length}</div>
+              {/* Scroll the long token list (a busy wallet trades dozens) with a pinned header. */}
+              <div className="max-h-72 overflow-auto">
+                <table className="w-full min-w-[440px] text-xs">
+                  <thead className="sticky top-0 z-10 bg-[var(--head)] text-left text-[10px] uppercase tracking-wider text-slate-500">
+                    <tr>{['Token', 'Net', 'Buys', 'Sells', 'Volume', 'Last'].map((h) => <th key={h} className="px-3 py-1.5 font-medium">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
                   {s.tokens.map((t) => (
                     <tr key={`${t.network}:${t.token}`} className="border-t border-white/[0.04] tabular-nums">
                       <td className="px-3 py-1.5 font-medium text-slate-200">{t.token} <span className="text-slate-600">· {t.network}</span></td>
@@ -217,8 +219,9 @@ export default function WalletAccount({ address, onClose }: { address: string; o
                       <td className="px-3 py-1.5 text-slate-500">{timeAgo(t.lastTs)}</td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>

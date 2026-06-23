@@ -312,6 +312,18 @@ export interface LeaderboardRow {
   topTokens: { network: string; token: string }[]
 }
 
+/** A copy-worthy wallet discovered on-chain (GET /api/smart-money/discover), verified by realized P&L. */
+export interface DiscoveredTrader {
+  address: string
+  score: number
+  tier: 'proven' | 'promising' | 'unproven' | 'thin'
+  realizedPnlUsd: number
+  roundTrips: number
+  recencyDays: number | null
+  trades: number
+  viaTokens: { network: string; token: string }[]
+}
+
 export interface TournamentStanding {
   botId: string
   name: string
