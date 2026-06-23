@@ -5,6 +5,7 @@ import { useModal } from '../useModal'
 import { botsForMode } from '../stats'
 import { fmtUsd, fmtCompactUsd, fmtSign, pnlColor, shortAddr, timeAgo } from '../format'
 import Sparkline from './Sparkline'
+import WalletAccount from './WalletAccount'
 import type { Bot, Follow, LeaderboardRow } from '../types'
 
 /**
@@ -54,6 +55,7 @@ export default function CopyTrading() {
   const [caveat, setCaveat] = useState('')
   const [loading, setLoading] = useState(true)
   const [setup, setSetup] = useState<{ open: boolean; wallet: SetupTarget }>({ open: false, wallet: null })
+  const [detail, setDetail] = useState<string | null>(null)
 
   const loadBoard = async () => {
     setLoading(true)
@@ -77,6 +79,10 @@ export default function CopyTrading() {
 
   if (!meta) return null
 
+  // Clicking a wallet opens the full analysis view (net-flow chart, holdings/allocation,
+  // per-token flows, recent trades) so you can vet a wallet yourself before copying.
+  if (detail) return <WalletAccount address={detail} onClose={() => setDetail(null)} />
+
   return (
     <div className="animate-in space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -93,9 +99,9 @@ export default function CopyTrading() {
         </div>
       )}
 
-      <ActiveCopies follows={follows} standalone={standalone} all={copyBots} mode={mode} notify={notify} refresh={refresh} control={control} remove={remove} />
+      <ActiveCopies follows={follows} standalone={standalone} all={copyBots} mode={mode} notify={notify} refresh={refresh} control={control} remove={remove} onSelect={setDetail} />
 
-      <Leaderboard rows={rows} loading={loading} caveat={caveat} onCopy={(w) => setSetup({ open: true, wallet: w })} />
+      <Leaderboard rows={rows} loading={loading} caveat={caveat} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
 
       <Timeline bots={copyBots} />
 
@@ -115,11 +121,12 @@ export default function CopyTrading() {
 
 // ── Active copies ────────────────────────────────────────────────────────────
 function ActiveCopies({
-  follows, standalone, all, mode, notify, refresh, control, remove,
+  follows, standalone, all, mode, notify, refresh, control, remove, onSelect,
 }: {
   follows: Follow[]; standalone: Bot[]; all: Bot[]; mode: string
   notify: (m: string, t?: 'error' | 'success' | 'info') => void; refresh: () => void
   control: (id: string, a: 'pause' | 'resume' | 'stop') => Promise<void>; remove: (id: string) => Promise<void>
+  onSelect: (address: string) => void
 }) {
   if (follows.length === 0 && standalone.length === 0)
     return (
@@ -134,10 +141,10 @@ function ActiveCopies({
     <Card title="Your copies" sub={`${follows.length} auto-follow${follows.length === 1 ? '' : 's'} · ${standalone.length} copy bot${standalone.length === 1 ? '' : 's'}`}>
       <div className="grid gap-3 lg:grid-cols-2">
         {follows.map((f) => (
-          <FollowCard key={f.id} f={f} mirrors={all.filter((b) => b.followId === f.id)} notify={notify} refresh={refresh} />
+          <FollowCard key={f.id} f={f} mirrors={all.filter((b) => b.followId === f.id)} notify={notify} refresh={refresh} onSelect={onSelect} />
         ))}
         {standalone.map((b) => (
-          <CopyBotCard key={b.id} b={b} control={control} remove={remove} />
+          <CopyBotCard key={b.id} b={b} control={control} remove={remove} onSelect={onSelect} />
         ))}
       </div>
       {follows.length > 0 && mode === 'paper' && (
@@ -147,7 +154,7 @@ function ActiveCopies({
   )
 }
 
-function FollowCard({ f, mirrors, notify, refresh }: { f: Follow; mirrors: Bot[]; notify: (m: string, t?: 'error' | 'success' | 'info') => void; refresh: () => void }) {
+function FollowCard({ f, mirrors, notify, refresh, onSelect }: { f: Follow; mirrors: Bot[]; notify: (m: string, t?: 'error' | 'success' | 'info') => void; refresh: () => void; onSelect: (address: string) => void }) {
   const [busy, setBusy] = useState(false)
   const deployed = f.totalBudgetUsd - f.poolUsd
   const act = async (fn: () => Promise<{ error?: string }>, ok: string) => {
@@ -161,14 +168,16 @@ function FollowCard({ f, mirrors, notify, refresh }: { f: Follow; mirrors: Bot[]
   return (
     <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/[0.04] p-3">
       <div className="flex items-center gap-2.5">
-        <Avatar seed={f.label} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-semibold text-white">{f.label}</span>
-            <span className="chip bg-emerald-500/10 text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400 pulse-dot" />Auto-following</span>
+        <button onClick={() => onSelect(f.walletAddress)} title="Analyse this wallet" className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+          <Avatar seed={f.label} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-semibold text-white hover:underline">{f.label}</span>
+              <span className="chip bg-emerald-500/10 text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400 pulse-dot" />Auto-following</span>
+            </div>
+            <div className="font-mono text-[11px] text-slate-500">{shortAddr(f.walletAddress)}</div>
           </div>
-          <div className="font-mono text-[11px] text-slate-500">{shortAddr(f.walletAddress)}</div>
-        </div>
+        </button>
         <span className={`text-sm font-bold tabular-nums ${pnlColor(f.stats.realizedUsd)}`}>{fmtSign(f.stats.realizedUsd)}</span>
       </div>
       <div className="mt-2.5 grid grid-cols-4 gap-1.5 text-center">
@@ -187,16 +196,19 @@ function FollowCard({ f, mirrors, notify, refresh }: { f: Follow; mirrors: Bot[]
   )
 }
 
-function CopyBotCard({ b, control, remove }: { b: Bot; control: (id: string, a: 'pause' | 'resume' | 'stop') => Promise<void>; remove: (id: string) => Promise<void> }) {
+function CopyBotCard({ b, control, remove, onSelect }: { b: Bot; control: (id: string, a: 'pause' | 'resume' | 'stop') => Promise<void>; remove: (id: string) => Promise<void>; onSelect: (address: string) => void }) {
   const holding = b.position.qty > 0
+  const addr = b.copy?.walletAddress
   return (
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-3">
       <div className="flex items-center gap-2.5">
-        <Avatar seed={b.copy?.walletLabel ?? b.token} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-white">{b.copy?.walletLabel} · {b.token}</div>
-          <div className="text-[11px] capitalize text-slate-500">{b.network} · {b.status}{holding ? ' · in position' : ' · waiting for a buy'}</div>
-        </div>
+        <button onClick={() => addr && onSelect(addr)} disabled={!addr} title="Analyse this wallet" className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default">
+          <Avatar seed={b.copy?.walletLabel ?? b.token} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-white hover:underline">{b.copy?.walletLabel} · {b.token}</div>
+            <div className="text-[11px] capitalize text-slate-500">{b.network} · {b.status}{holding ? ' · in position' : ' · waiting for a buy'}</div>
+          </div>
+        </button>
         <span className={`text-sm font-bold tabular-nums ${pnlColor(b.totalPnlUsd)}`}>{fmtSign(b.totalPnlUsd)}</span>
       </div>
       <div className="mt-2.5 grid grid-cols-3 gap-1.5 text-center">
@@ -232,7 +244,7 @@ const Spinner = ({ label }: { label: string }) => (
 )
 
 // ── Leaderboard ──────────────────────────────────────────────────────────────
-function Leaderboard({ rows, loading, caveat, onCopy }: { rows: LeaderboardRow[]; loading: boolean; caveat: string; onCopy: (w: { address: string; label: string }) => void }) {
+function Leaderboard({ rows, loading, caveat, onCopy, onSelect }: { rows: LeaderboardRow[]; loading: boolean; caveat: string; onCopy: (w: { address: string; label: string }) => void; onSelect: (address: string) => void }) {
   return (
     <Card
       title="🏆 Copy-worthiness leaderboard"
@@ -251,21 +263,23 @@ function Leaderboard({ rows, loading, caveat, onCopy }: { rows: LeaderboardRow[]
             return (
               <div key={r.address} className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 transition-colors hover:bg-white/[0.04]">
                 <span className="w-5 shrink-0 text-center text-sm font-bold tabular-nums text-slate-500">{i + 1}</span>
-                <Avatar seed={r.label} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-semibold text-white">{r.label}</span>
-                    <span className={`chip ring-1 ${tier.chip}`}>{tier.label}</span>
-                  </div>
-                  <div className="mt-1 flex items-center gap-2">
-                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-white/[0.06]">
-                      <div className={`h-full rounded-full bg-gradient-to-r ${tier.bar}`} style={{ width: `${Math.max(3, r.score)}%` }} />
+                <button onClick={() => onSelect(r.address)} title="Analyse this wallet" className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                  <Avatar seed={r.label} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-semibold text-white hover:underline">{r.label}</span>
+                      <span className={`chip ring-1 ${tier.chip}`}>{tier.label}</span>
                     </div>
-                    <span className="text-[11px] font-semibold tabular-nums text-slate-400">{r.score}/100</span>
-                    <span className="hidden text-[11px] text-slate-600 sm:inline">·</span>
-                    <span className="hidden text-[11px] text-slate-500 sm:inline">{r.roundTrips} round trips · {r.recencyDays == null ? 'no activity' : r.recencyDays < 1 ? 'today' : `${Math.round(r.recencyDays)}d ago`}</span>
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-white/[0.06]">
+                        <div className={`h-full rounded-full bg-gradient-to-r ${tier.bar}`} style={{ width: `${Math.max(3, r.score)}%` }} />
+                      </div>
+                      <span className="text-[11px] font-semibold tabular-nums text-slate-400">{r.score}/100</span>
+                      <span className="hidden text-[11px] text-slate-600 sm:inline">·</span>
+                      <span className="hidden text-[11px] text-slate-500 sm:inline">{r.roundTrips} round trips · {r.recencyDays == null ? 'no activity' : r.recencyDays < 1 ? 'today' : `${Math.round(r.recencyDays)}d ago`}</span>
+                    </div>
                   </div>
-                </div>
+                </button>
                 <div className="hidden shrink-0 text-right sm:block">
                   <div className={`text-xs font-semibold tabular-nums ${pnlColor(profit)}`}>{fmtCompactUsd(profit, { signed: true })}</div>
                   <div className="text-[10px] text-slate-500">{r.basis === 'realized-pnl' ? 'realized P&L' : 'net flow'}</div>
@@ -343,12 +357,16 @@ function CopySetup({ wallet, onClose, onLaunched }: { wallet: SetupTarget; onClo
 
   const budgetN = Number(budget)
   const perN = Number(perTrade)
-  const tierSl = meta?.risk[risk]?.stopLossPct ?? 5
-  const tierTp = meta?.risk[risk]?.takeProfitPct ?? 4.5
-  const slShown = sl.trim() ? Number(sl) : tierSl
-  const tpShown = tp.trim() ? Number(tp) : tierTp
+  const slN = sl.trim() ? Number(sl) : null
+  const tpN = tp.trim() ? Number(tp) : null
   const maxConcurrent = Math.max(1, Math.min(10, Math.floor((budgetN || 0) / (perN || 1)) || 1))
   const evmOk = /^0x[a-fA-F0-9]{40}$/.test(address.trim())
+  // Copy = mirror: the exit is the wallet's sell. A stop-loss / take-profit is an opt-in safety net,
+  // NOT a tier default — so we never claim a +4.5% cap the bot won't actually apply.
+  const safety =
+    (slN && slN > 0) || (tpN && tpN > 0)
+      ? ` Safety net: also exits on ${[slN && slN > 0 ? `a −${slN}% stop-loss` : '', tpN && tpN > 0 ? `a +${tpN}% take-profit` : ''].filter(Boolean).join(' or ')}.`
+      : ' No stop-loss or take-profit — you ride their full move (add one in Advanced for a safety net).'
 
   // Mirror the server bounds so the preview/button reflect what will actually be accepted.
   const valid =
@@ -461,11 +479,11 @@ function CopySetup({ wallet, onClose, onLaunched }: { wallet: SetupTarget; onClo
           </button>
           {advanced && (
             <div className="grid grid-cols-3 gap-2 rounded-xl bg-white/[0.02] p-2.5">
-              <Field label={`Stop-loss % (${tierSl})`}>
-                <input className="input !py-2 text-xs" type="number" placeholder={String(tierSl)} value={sl} onChange={(e) => setSl(e.target.value)} />
+              <Field label="Stop-loss % (optional)">
+                <input className="input !py-2 text-xs" type="number" placeholder="off" value={sl} onChange={(e) => setSl(e.target.value)} />
               </Field>
-              <Field label={`Take-profit % (${tierTp})`}>
-                <input className="input !py-2 text-xs" type="number" placeholder={String(tierTp)} value={tp} onChange={(e) => setTp(e.target.value)} />
+              <Field label="Take-profit % (optional)">
+                <input className="input !py-2 text-xs" type="number" placeholder="off" value={tp} onChange={(e) => setTp(e.target.value)} />
               </Field>
               <Field label="Sweep to">
                 <select className="input !py-2 text-xs" value={sweep} onChange={(e) => setSweep(e.target.value as 'native' | 'usdt')}>
@@ -480,9 +498,9 @@ function CopySetup({ wallet, onClose, onLaunched }: { wallet: SetupTarget; onClo
           <div className="rounded-xl border border-indigo-400/20 bg-indigo-500/[0.06] p-3 text-[12px] leading-relaxed text-slate-300">
             <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-indigo-300">Preview</div>
             {kind === 'follow' ? (
-              <>When <b className="text-white">{label.trim() || 'this wallet'}</b> buys any curated token{net ? ` on ${net.name}` : ''}, a mirror deploys <b className="text-white">{fmtUsd(perN || 0)}</b> — up to <b className="text-white">{maxConcurrent}</b> at once from a <b className="text-white">{fmtUsd(budgetN || 0)}</b> pool. Each exits when they sell, or at <b className="text-rose-300">−{slShown}%</b> / <b className="text-emerald-300">+{tpShown}%</b>.</>
+              <>When <b className="text-white">{label.trim() || 'this wallet'}</b> buys any curated token{net ? ` on ${net.name}` : ''}, a mirror deploys <b className="text-white">{fmtUsd(perN || 0)}</b> — up to <b className="text-white">{maxConcurrent}</b> at once from a <b className="text-white">{fmtUsd(budgetN || 0)}</b> pool. Each mirror exits when they sell.{safety}</>
             ) : (
-              <>When <b className="text-white">{label.trim() || 'this wallet'}</b> buys <b className="text-white">{token || '—'}</b>{net ? ` on ${net.name}` : ''}, your bot deploys <b className="text-white">{fmtUsd(perN || 0)}</b> ({budgetN > 0 ? Math.round(((perN || 0) / budgetN) * 100) : 0}% of <b className="text-white">{fmtUsd(budgetN || 0)}</b>). It exits when they sell {token || 'it'}, or at <b className="text-rose-300">−{slShown}%</b> / <b className="text-emerald-300">+{tpShown}%</b>.</>
+              <>When <b className="text-white">{label.trim() || 'this wallet'}</b> buys <b className="text-white">{token || '—'}</b>{net ? ` on ${net.name}` : ''}, your bot deploys <b className="text-white">{fmtUsd(perN || 0)}</b> ({budgetN > 0 ? Math.round(((perN || 0) / budgetN) * 100) : 0}% of <b className="text-white">{fmtUsd(budgetN || 0)}</b>). It exits when they sell {token || 'it'}.{safety}</>
             )}
             <div className="mt-1.5 text-[11px] text-slate-500">
               {mode === 'live'

@@ -104,9 +104,16 @@ export default function WalletAccount({ address, onClose }: { address: string; o
           title={profile.score.caveat}
         >
           <span className="font-semibold uppercase tracking-wide">Copy-worthiness {profile.score.score}/100 · {profile.score.tier}</span>{' '}
-          — {profile.score.roundTrips} closed position{profile.score.roundTrips === 1 ? '' : 's'}, {fmtSign(profile.score.realizedFlowUsd)} net realized flow
+          — {profile.score.roundTrips} closed position{profile.score.roundTrips === 1 ? '' : 's'},{' '}
+          {profile.score.basis === 'realized-pnl' && profile.score.realizedPnlUsd != null
+            ? `${fmtSign(profile.score.realizedPnlUsd)} realized P&L`
+            : `${fmtSign(profile.score.realizedFlowUsd)} net flow`}
           {profile.score.recencyDays != null ? `, last active ${Math.round(profile.score.recencyDays)}d ago` : ''}.
-          <span className="mt-1 block text-[10px] opacity-80">Flow heuristic from on-chain transfers, not verified PnL — hover for the caveat. Copy-trading is only as good as the wallet you mirror.</span>
+          <span className="mt-1 block text-[10px] opacity-80">
+            {profile.score.basis === 'realized-pnl'
+              ? 'True realized P&L (average-cost, historical prices) — excludes held bags, fees & unpriced tokens. Hover for the caveat. Copy-trading is only as good as the wallet you mirror.'
+              : 'Flow heuristic from on-chain transfers, not verified PnL — hover for the caveat. Copy-trading is only as good as the wallet you mirror.'}
+          </span>
         </div>
       )}
 

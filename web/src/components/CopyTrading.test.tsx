@@ -62,6 +62,24 @@ describe('CopyTrading', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Copy' })[0])
     await waitFor(() => expect(document.body).toHaveTextContent(/Preview/i))
     expect(document.body).toHaveTextContent(/Auto-follow all buys/i)
+    // Mirror-by-default: the preview must NOT claim a take-profit the bot won't apply.
+    expect(document.body).toHaveTextContent(/ride their full move/i)
+  })
+
+  test('clicking a wallet opens the analysis (WalletAccount) view', async () => {
+    const profile = {
+      wallet: '0x' + 'a'.repeat(40), label: 'GCR', tracking: true, events: [], holdings: [],
+      stats: { trades: 0, buys: 0, sells: 0, volumeUsd: 0, netFlowUsd: 0, firstTs: null, lastTs: null, tokens: [], series: [] },
+      score: { score: 0, tier: 'thin', basis: 'flow', realizedFlowUsd: 0, realizedPnlUsd: null, roundTrips: 0, recencyDays: null, caveat: '' },
+    }
+    globalThis.fetch = vi.fn(async (url: unknown) =>
+      String(url).includes('/api/smart-money/wallet/')
+        ? new Response(JSON.stringify(profile), { headers: { 'content-type': 'application/json' } })
+        : new Response(JSON.stringify({ rows: [row({ label: 'GCR' })], needsKey: false, totalWallets: 1, caveat: 'x' }), { headers: { 'content-type': 'application/json' } })) as typeof fetch
+    render(<CopyTrading />)
+    await waitFor(() => screen.getByText('GCR'))
+    fireEvent.click(screen.getByTitle('Analyse this wallet'))
+    await waitFor(() => expect(screen.queryByText('🏆 Copy-worthiness leaderboard')).not.toBeInTheDocument())
   })
 
   test('a missing Etherscan key surfaces the setup banner', async () => {
