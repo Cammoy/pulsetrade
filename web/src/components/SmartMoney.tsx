@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useStore } from '../store'
+import { useStore, jpost } from '../store'
 import type { SmartMoneyEvent, TrackedWallet } from '../types'
 import { fmtUsd, timeAgo, parseAmount } from '../format'
 import WalletAccount from './WalletAccount'
@@ -76,7 +76,8 @@ export default function SmartMoney() {
     }
   }
   const removeW = async (a: string) => {
-    await fetch(`/api/wallets/${a}`, { method: 'DELETE' })
+    const out = await jpost<{ error?: string }>(`/api/wallets/${a}`, undefined, 'DELETE')
+    if (out.error) notify(out.error, 'error')
     loadWallets()
   }
 

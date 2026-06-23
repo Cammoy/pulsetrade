@@ -141,7 +141,7 @@ async function jget<T>(url: string): Promise<T> {
  * HTML error page must degrade to `{ error }` instead of crashing the app with
  * a raw SyntaxError from `r.json()`.
  */
-async function jpost<T extends { error?: string }>(url: string, body?: object, method: 'POST' | 'PATCH' = 'POST'): Promise<T> {
+export async function jpost<T extends { error?: string }>(url: string, body?: object, method: 'POST' | 'PATCH' | 'DELETE' = 'POST'): Promise<T> {
   let r: Response
   try {
     r = await fetch(url, {

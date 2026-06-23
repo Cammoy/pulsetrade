@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useStore } from '../store'
+import { useStore, jpost } from '../store'
 import { useModal } from '../useModal'
 import type { AssetMetrics, CoinHit, TrackerValuation } from '../types'
 import { fmtUsd, fmtSign, fmtPct, fmtQty, fmtPrice, pnlColor, ASSET_COLORS } from '../format'
@@ -112,7 +112,8 @@ export default function HoldingsTracker() {
 
   const t = data?.totals
   const del = async (url: string) => {
-    await fetch(url, { method: 'DELETE' })
+    const out = await jpost<{ error?: string }>(url, undefined, 'DELETE')
+    if (out.error) notify(out.error, 'error')
     refresh()
   }
 
