@@ -43,13 +43,22 @@ const num = (v: unknown): number | null => {
 
 /**
  * Pure scoring over already-fetched provider payloads.
- * @param gp   GoPlus result object for the token (or null if unavailable)
- * @param hp   honeypot.is response (or null if unavailable)
+ * @param gp     GoPlus result object for the token (or null if unavailable)
+ * @param hp     honeypot.is response (or null if unavailable)
+ * @param strict SNIPER screening — stricter than the informational UI report. A fresh
+ *               automated buy of a minutes-old contract can't tolerate "probably fine":
+ *               (c) an upgradeable proxy or reclaimable ownership becomes NON-tradeable
+ *               (the owner can swap in malicious logic / re-seize control after you buy),
+ *               and (d) BOTH providers must affirmatively answer — one being down or blind
+ *               to the token is "unverified", which for a snipe is non-tradeable. The
+ *               general report (strict=false) keeps these as warnings and surfaces on a
+ *               single source. [P0-6c, P0-6d]
  */
 export function assess(
   ctx: { network: string; chainId: number; token: string },
   gp: Record<string, any> | null,
   hp: Record<string, any> | null,
+  strict = false,
 ): RiskReport {
   const flags: RiskFlag[] = []
   const positives: string[] = []
@@ -112,13 +121,13 @@ export function assess(
       cut(30, { id: 'hidden-owner', label: 'Hidden owner', detail: 'Ownership is obscured — "renounced" may be cosmetic while real control is retained.', severity: 'critical' })
 
     if (GP(gp.can_take_back_ownership))
-      cut(25, { id: 'reclaim-owner', label: 'Ownership can be reclaimed', detail: 'Even if renounced, the owner can take control back later.', severity: 'warn' })
+      cut(strict ? 45 : 25, { id: 'reclaim-owner', label: 'Ownership can be reclaimed', detail: 'Even if renounced, the owner can take control back later.', severity: strict ? 'critical' : 'warn' })
 
     if (GP(gp.owner_change_balance))
       cut(45, { id: 'owner-balance', label: 'Owner can edit balances', detail: 'The owner can change any holder\'s balance — they can zero out yours.', severity: 'critical' })
 
     if (GP(gp.is_proxy))
-      cut(12, { id: 'proxy', label: 'Upgradeable proxy', detail: 'Contract logic can be swapped after launch — audited code is not a guarantee.', severity: 'warn' })
+      cut(strict ? 40 : 12, { id: 'proxy', label: 'Upgradeable proxy', detail: 'Contract logic can be swapped after launch — audited code is not a guarantee.', severity: strict ? 'critical' : 'warn' })
 
     if (GP(gp.trading_cooldown))
       cut(8, { id: 'cooldown', label: 'Trading cooldown', detail: 'Enforced delay between trades can interfere with timely exits.', severity: 'warn' })
@@ -128,9 +137,16 @@ export function assess(
 
     gpBuyTax = num(gp.buy_tax) !== null ? num(gp.buy_tax)! * 100 : null
     gpSellTax = num(gp.sell_tax) !== null ? num(gp.sell_tax)! * 100 : null
-    if (gpSellTax !== null && gpSellTax >= 50 && !flags.some((f) => f.id.startsWith('sell-tax')))
+    // Flag on the WORST sell tax across providers. honeypot.is simulates a small trade
+    // (can read low) while GoPlus reads the contract's configured/max rate (the true exit
+    // confiscation) — when they disagree the higher one wins. The EXTREME (critical) branch
+    // must fire even if honeypot.is already pushed a lower-tier 'sell-tax-high' WARN; only a
+    // pre-existing CRITICAL sell-tax flag suppresses it. The high branch dedupes on any flag.
+    const hasCriticalSellTax = flags.some((f) => f.id.startsWith('sell-tax') && f.severity === 'critical')
+    const hasAnySellTaxFlag = flags.some((f) => f.id.startsWith('sell-tax'))
+    if (gpSellTax !== null && gpSellTax >= 50 && !hasCriticalSellTax)
       cut(60, { id: 'sell-tax-extreme-gp', label: `Extreme sell tax ${gpSellTax.toFixed(0)}%`, detail: 'Most proceeds are taken on exit — effectively a honeypot.', severity: 'critical' })
-    else if (gpSellTax !== null && gpSellTax >= 15 && !flags.some((f) => f.id.startsWith('sell-tax')))
+    else if (gpSellTax !== null && gpSellTax >= 15 && !hasAnySellTaxFlag)
       cut(20, { id: 'sell-tax-high-gp', label: `High sell tax ${gpSellTax.toFixed(1)}%`, detail: 'A large cut is taken when you sell.', severity: 'warn' })
 
     // Liquidity / rug-pull signals
@@ -139,11 +155,18 @@ export function assess(
       cut(20, { id: 'closed-source', label: 'Unverified contract', detail: 'Source code is not published — its behaviour cannot be reviewed.', severity: 'warn' })
     else if (open) positives.push('Verified open-source contract')
 
-    const lpLocked = num(gp.lp_holder_count) !== null ? lpLockedPct(gp) : null
+    const lpHolderCountPresent = num(gp.lp_holder_count) !== null
+    const lpLocked = lpHolderCountPresent ? lpLockedPct(gp) : null
     if (lpLocked !== null) {
       if (lpLocked >= 95) positives.push(`${lpLocked.toFixed(0)}% of LP locked/burned`)
       else if (lpLocked < 50) cut(30, { id: 'lp-unlocked', label: `Only ${lpLocked.toFixed(0)}% of LP locked`, detail: 'Most liquidity is removable — classic rug-pull setup; the team can pull the pool.', severity: 'critical' })
       else cut(12, { id: 'lp-partial', label: `${lpLocked.toFixed(0)}% of LP locked`, detail: 'A meaningful share of liquidity can still be withdrawn.', severity: 'warn' })
+    } else if (lpHolderCountPresent) {
+      // lp_holder_count says this token HAS an LP, but the holder breakdown isn't
+      // enumerable (common for minutes-old pools — exactly the sniper's target set).
+      // Removable liquidity is the #1 new-pool rug vector, so don't assume it's safe —
+      // apply a precautionary cut + visible flag rather than silently passing it. [lp-unknown]
+      cut(15, { id: 'lp-lock-unknown', label: 'LP lock status unknown', detail: 'Liquidity exists but its lock status could not be verified — it may be fully removable (rug risk).', severity: 'warn' })
     }
 
     const topPct = num(gp.holder_count) !== null ? topHolderPct(gp) : null
@@ -167,6 +190,18 @@ export function assess(
       ], positives: [], buyTaxPct: null, sellTaxPct: null, sources, checkedAt: Date.now(),
     }
   }
+
+  // Strict (sniper) screening requires BOTH providers to have answered. Reaching here
+  // means sources.length >= 1 (the 0 case returned above), so this fires on exactly
+  // one provider — enough for an informational report, not enough to snipe a fresh
+  // token blind to half the safety surface. [P0-6d]
+  if (strict && sources.length < 2)
+    cut(100, {
+      id: 'single-source',
+      label: 'Only one safety provider responded',
+      detail: `Sniping requires confirmation from BOTH GoPlus and honeypot.is — only ${sources[0]} answered for this token. Not enough verification to auto-buy a fresh contract.`,
+      severity: 'critical',
+    })
 
   score = Math.max(0, Math.min(100, Math.round(score)))
   const hasCritical = flags.some((f) => f.severity === 'critical')

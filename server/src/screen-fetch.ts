@@ -82,8 +82,10 @@ function nonEvmAdvisory(network: string, token: string): RiskReport {
   }
 }
 
-/** Screen an arbitrary token address on a known network. Cached 5 min. */
-export async function screenAddress(network: string, address: string, symbol?: string): Promise<RiskReport> {
+/** Screen an arbitrary token address on a known network. Cached 5 min.
+ *  `strict` runs the SNIPER-grade screen (both providers required, proxy/reclaim
+ *  blocking) — pass it from the live-buy gate, not the informational UI report. */
+export async function screenAddress(network: string, address: string, symbol?: string, strict = false): Promise<RiskReport> {
   const net = networkById(network)
   if (net && !net.evm) return nonEvmAdvisory(network, symbol ?? address)
   if (!net) {
@@ -101,12 +103,14 @@ export async function screenAddress(network: string, address: string, symbol?: s
     }
   }
 
-  const cacheKey = `${net.chainId}:${address.toLowerCase()}`
+  // The strict verdict differs from the lenient one, so they must cache separately —
+  // otherwise a UI report could serve a sniper a lenient pass (or vice versa).
+  const cacheKey = `${net.chainId}:${address.toLowerCase()}:${strict ? 's' : 'n'}`
   const hit = cache.get(cacheKey)
   if (hit && Date.now() - hit.at < TTL) return hit.report
 
   const [gp, hp] = await Promise.all([fetchGoPlus(net.chainId, address), fetchHoneypot(net.chainId, address)])
-  const report = assess({ network: net.id, chainId: net.chainId, token: symbol ?? address }, gp, hp)
+  const report = assess({ network: net.id, chainId: net.chainId, token: symbol ?? address }, gp, hp, strict)
   cache.set(cacheKey, { at: Date.now(), report })
   return report
 }
@@ -124,7 +128,8 @@ export async function screenPrefetched(
 ): Promise<RiskReport> {
   const net = networkById(network)
   if (!net) return screenAddress(network, address, symbol) // delegates to error path
-  const cacheKey = `${net.chainId}:${address.toLowerCase()}`
+  // Non-strict (display) report — share the cache slot with screenAddress(strict=false).
+  const cacheKey = `${net.chainId}:${address.toLowerCase()}:n`
   const hit = cache.get(cacheKey)
   if (hit && Date.now() - hit.at < TTL) return hit.report
   const hp = await fetchHoneypot(net.chainId, address)

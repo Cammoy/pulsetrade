@@ -50,6 +50,9 @@ test('validation: bad network, low budget, too few/many contestants', () => {
   assert.ok('error' in (startTournament({ network: 'base', token: 'LINK', budgetUsd: 5, contestants }) as any))
   assert.ok('error' in (startTournament({ network: 'base', token: 'LINK', budgetUsd: 500, contestants: contestants.slice(0, 1) }) as any))
   assert.ok('error' in (startTournament({ network: 'base', token: 'LINK', budgetUsd: 500, contestants: Array(13).fill(contestants[0]) }) as any))
+  // Holdings-only chain (Ethereum) is refused up front and leaves NO orphan record.
+  assert.ok('error' in (startTournament({ network: 'ethereum', token: 'WETH', budgetUsd: 500, contestants }) as any))
+  assert.equal(state.tournaments.length, 0, 'no orphan tournament pushed for a holdings-only chain')
 })
 
 test('standings rank by return %, best first', () => {

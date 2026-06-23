@@ -22,6 +22,10 @@ export interface AiSignal {
 }
 
 const REFRESH_MS = 10 * 60_000
+// Consumer-side staleness ceiling: if Gemini refresh keeps failing (outage, quota
+// exhausted, key revoked), never act on the last signal forever — past this age it
+// is treated as HOLD. Background refresh still runs; we just stop trading on stale.
+const STALE_CEILING_MS = 3 * REFRESH_MS // 30 min
 const cache = new Map<string, AiSignal>()
 const inflight = new Map<string, Promise<AiSignal | null>>()
 
@@ -83,15 +87,15 @@ async function requestSignal(symbol: string, closes: number[]): Promise<AiSignal
       console.error(`[ai] gemini request failed: ${res.status} ${(await res.text()).slice(0, 200)}`)
       return null
     }
-    const data: any = await res.json()
-    const text = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('')
+    const data: { candidates?: { content?: { parts?: { text?: string }[] } }[] } = await res.json()
+    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('')
     if (!text) return null
     const parsed = JSON.parse(text)
     const action = ['buy', 'sell', 'hold'].includes(parsed.action) ? parsed.action : 'hold'
     const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0))
     return { action, confidence, reason: String(parsed.reason ?? '').slice(0, 240), at: Date.now() }
-  } catch (e: any) {
-    console.error('[ai] signal request failed:', e?.message ?? e)
+  } catch (e) {
+    console.error('[ai] signal request failed:', e instanceof Error ? e.message : e)
     return null
   }
 }
@@ -105,7 +109,8 @@ export function getAiSignal(network: string, symbol: string, closes: number[]): 
   if (!aiReady()) return { action: 'hold', confidence: 0, reason: 'GEMINI_API_KEY not set — AI bot holding', at: Date.now(), stale: true }
   const key = `${network}:${symbol}`
   const cached = cache.get(key)
-  const fresh = cached && Date.now() - cached.at < REFRESH_MS
+  const age = cached ? Date.now() - cached.at : Infinity
+  const fresh = age < REFRESH_MS
   if (!fresh && !inflight.has(key) && closes.length >= 30) {
     const p = requestSignal(symbol, closes).then((sig) => {
       if (sig) cache.set(key, sig)
@@ -114,7 +119,12 @@ export function getAiSignal(network: string, symbol: string, closes: number[]): 
     })
     inflight.set(key, p)
   }
-  return cached ?? null
+  if (!cached) return null
+  // A signal we couldn't refresh for too long is no longer safe to trade on — hold
+  // (the background refresh above still runs, so a recovered API resumes trading).
+  if (age >= STALE_CEILING_MS)
+    return { action: 'hold', confidence: 0, reason: `AI signal ${Math.round(age / 60_000)}m stale — holding until refresh`, at: cached.at, stale: true }
+  return cached
 }
 
 /** Test seam: inject a signal without calling the API. */

@@ -1,10 +1,25 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#070a12" />
+    <!-- Apply the saved (or system) theme BEFORE paint so there's no flash. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('pulsetrade.theme') || 'system'
+          var eff = t === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : t
+          document.documentElement.classList.add(eff)
+          document.documentElement.style.colorScheme = eff
+          if (eff === 'light') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#eef1f6')
+        } catch (e) {
+          document.documentElement.classList.add('dark')
+        }
+      })()
+    </script>
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>PulseTrade — Multi-chain Trading Bots</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />

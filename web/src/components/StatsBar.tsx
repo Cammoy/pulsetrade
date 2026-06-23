@@ -1,38 +1,31 @@
+import type { ReactNode } from 'react'
 import { useStore } from '../store'
+import { useShallow } from 'zustand/react/shallow'
 import { fmtSign, fmtUsd, pnlColor } from '../format'
+import { aggregateStats, botsForMode } from '../stats'
+import CountUp from '../useCountUp'
 
-function Stat({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+function Stat({ label, value, sub, color, title }: { label: string; value: ReactNode; sub?: string; color?: string; title?: string }) {
   return (
     <div className="glass min-w-0 px-4 py-3">
       <div className="truncate text-[11px] font-medium tracking-wide text-slate-500 uppercase">{label}</div>
-      <div className={`mt-0.5 truncate text-xl font-bold tabular-nums ${color ?? 'text-white'}`}>{value}</div>
+      <div className={`mt-0.5 truncate text-xl font-bold tabular-nums ${color ?? 'text-white'}`} title={title}>{value}</div>
       {sub && <div className="truncate text-[11px] text-slate-500">{sub}</div>}
     </div>
   )
 }
 
 export default function StatsBar() {
-  const { bots } = useStore()
-  const active = bots.filter((b) => b.status === 'running' || b.status === 'scheduled')
-  const totalPnl = bots.reduce((s, b) => s + b.totalPnlUsd, 0)
-  const realized = bots.reduce((s, b) => s + b.stats.realizedUsd, 0)
-  const native = bots.reduce((s, b) => s + b.stats.nativeTakenUsd, 0)
-  const wins = bots.reduce((s, b) => s + b.stats.wins, 0)
-  const losses = bots.reduce((s, b) => s + b.stats.losses, 0)
-  const winRate = wins + losses > 0 ? (wins / (wins + losses)) * 100 : null
-
-  const byRisk = (['conservative', 'balanced', 'aggressive'] as const).map((r) => ({
-    r,
-    pnl: bots.filter((b) => b.risk === r).reduce((s, b) => s + b.totalPnlUsd, 0),
-    n: bots.filter((b) => b.risk === r).length,
-  }))
+  const { bots, mode } = useStore(useShallow((s) => ({ bots: s.bots, mode: s.mode })))
+  // Overview is scoped to the ACTIVE workspace — paper and live totals never mix.
+  const { totalPnl, realized, native, wins, losses, winRate, activeCount, total, byRisk } = aggregateStats(botsForMode(bots, mode))
 
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        <Stat label="Total P&L" value={fmtSign(totalPnl)} color={pnlColor(totalPnl)} sub={`realized ${fmtSign(realized)}`} />
-        <Stat label="Profit taken" value={fmtUsd(native)} sub="swept to native / USDT" color="text-cyan-300" />
-        <Stat label="Active bots" value={`${active.length}/${bots.length}`} sub="running or scheduled" />
+        <Stat label="Total P&L" value={<CountUp value={totalPnl} format={fmtSign} />} title={fmtSign(totalPnl)} color={pnlColor(totalPnl)} sub={`realized ${fmtSign(realized)}`} />
+        <Stat label="Profit taken" value={<CountUp value={native} format={fmtUsd} />} title={fmtUsd(native)} sub="swept to native / USDT" color="text-cyan-300" />
+        <Stat label="Active bots" value={`${activeCount}/${total}`} sub="running or scheduled" />
         <Stat
           label="Win rate"
           value={winRate === null ? '—' : `${winRate.toFixed(0)}%`}

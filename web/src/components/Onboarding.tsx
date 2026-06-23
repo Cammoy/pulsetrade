@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../store'
+import { useModal } from '../useModal'
 
 const STEPS = [
   {
@@ -9,13 +10,13 @@ const STEPS = [
   },
   {
     icon: '📝',
-    title: 'Start in Paper mode',
-    body: 'You’re in Paper mode: bots trade with real live prices but simulated money. Prove a strategy is profitable here before risking a cent. Live mode (per-chain wallet keys) executes real swaps via 0x on EVM chains and Jupiter on Solana.',
+    title: 'Paper and Live are separate workspaces',
+    body: 'You start in the Paper workspace — bots trade on real live prices with simulated money, so you can prove a strategy before risking a cent. Switch to Live (the Paper/Live toggle, top of the screen) once you’ve added wallet keys. Each bot runs for life in the workspace it was born in, and you only ever see one workspace’s bots and P&L at a time. Live executes real swaps via 0x on EVM chains and Jupiter on Solana, with built-in daily and lifetime spend limits — and when you switch, it shows your live wallet balance up front.',
   },
   {
     icon: '🧙',
     title: 'Launch a bot in under a minute',
-    body: 'Click “New Bot” for the guided wizard: pick a network, a coin, a proven strategy (Grid, RSI Mean-Reversion, EMA Momentum or Smart DCA) and a risk tolerance. Run several bots on the same coin at different tolerances and compare their P&L side by side.',
+    body: 'Click “New Bot” for the guided wizard: pick a network, a coin, a strategy and a risk tolerance. All-Weather is the one-click default — it auto-adapts to rising, falling and ranging markets — or choose Grid, RSI Mean-Reversion, EMA Momentum or Smart DCA. Run several bots on the same coin at different tolerances and compare their P&L side by side.',
   },
   {
     icon: '💡',
@@ -31,6 +32,11 @@ const STEPS = [
     icon: '🎯',
     title: 'Snipe, compete, and let AI decide',
     body: 'The Sniper shows only verified, sellable, well-distributed new tokens (one-shot or fully automatic). Tournaments pit bots head-to-head for the best return. And the AI Trader lets Gemini call buy/sell/hold, sized by its confidence.',
+  },
+  {
+    icon: '💼',
+    title: 'Your wallet, portfolio and payouts',
+    body: 'The Wallet tab reads your balances across every chain, charts your holdings, and tracks any address you paste — with live cost-basis P&L. Profit your bots take is swept to native coin or USDT and banked in a vault, ready to withdraw to any address: real on-chain in Live, simulated in Paper. Save and label the addresses you use most so a payout is one click.',
   },
   {
     icon: '🛡️',
@@ -50,10 +56,14 @@ export default function Onboarding() {
     openTour(false)
   }
 
+  // Esc-dismiss + body scroll-lock, like every other overlay. Esc persists the
+  // onboarded flag so a returning user isn't re-greeted.
+  useModal(finish)
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="glass w-full max-w-md border-white/10 bg-[#0b0f1a]/95 p-6 text-center">
-        <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-3xl shadow-lg shadow-indigo-500/30">
+      <div className="glass w-full max-w-md border-white/10 bg-[var(--modal)] p-6 text-center">
+        <div className="brand-gradient mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl text-3xl shadow-lg dark:shadow-fuchsia-500/30">
           {step.icon}
         </div>
         <h2 className="text-xl font-bold text-white">{step.title}</h2>
@@ -61,7 +71,7 @@ export default function Onboarding() {
 
         <div className="mt-5 flex items-center justify-center gap-1.5">
           {STEPS.map((_, k) => (
-            <button key={k} onClick={() => setI(k)} className={`h-1.5 rounded-full transition-all ${k === i ? 'w-6 bg-indigo-400' : 'w-1.5 bg-white/15'}`} />
+            <button key={k} onClick={() => setI(k)} className={`h-1.5 rounded-full transition-all ${k === i ? 'w-6 bg-indigo-400' : 'w-1.5 bg-[var(--border-strong)] dark:bg-white/15'}`} />
           ))}
         </div>
 

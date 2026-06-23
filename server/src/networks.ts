@@ -16,6 +16,7 @@ export interface Network {
   native: { symbol: string; cg: string }
   usdt: { symbol: string; cg: string; address: string; decimals: number } // stable sweep target
   evm: boolean // false ⇒ paper trading only (no live swaps / EVM screening / wallet tracking)
+  tradeable?: boolean // false ⇒ HOLDINGS-ONLY: shown in the portfolio + tracked, but never offered for trading / sniping / copy. Default (undefined) = tradeable.
   avgGasUsd: number
   color: string
   gt: string // GeckoTerminal network slug (new-pool discovery + pool pricing)
@@ -121,7 +122,7 @@ export const NETWORKS: Network[] = [
     chainId: 101,
     evm: false,
     native: { symbol: 'SOL', cg: 'solana' },
-    usdt: { symbol: 'USDT', cg: 'tether', address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNUS', decimals: 6 },
+    usdt: { symbol: 'USDT', cg: 'tether', address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', decimals: 6 },
     avgGasUsd: 0.002,
     color: '#9945FF',
     gt: 'solana',
@@ -146,6 +147,30 @@ export const NETWORKS: Network[] = [
     tokens: [
       { symbol: 'ICP', name: 'Internet Computer', cg: 'internet-computer', address: 'ryjl3-tyaaa-aaaaa-aaaba-cai', decimals: 8 },
       { symbol: 'ckBTC', name: 'Chain-key Bitcoin', cg: 'chain-key-bitcoin', address: 'mxzaz-hqaaa-aaaar-qaada-cai', decimals: 8 },
+    ],
+  },
+  {
+    // Ethereum mainnet — HOLDINGS-ONLY (tradeable:false). Shown in the portfolio and
+    // tracked for smart-money, but never offered for trading/sniping: mainnet gas
+    // ($5–50/swap) makes the small-budget bots uneconomical.
+    id: 'ethereum',
+    name: 'Ethereum',
+    chainId: 1,
+    evm: true,
+    tradeable: false,
+    native: { symbol: 'ETH', cg: 'ethereum' },
+    usdt: USDT('0xdAC17F958D2ee523a2206206994597C13D831ec7'),
+    avgGasUsd: 6,
+    color: '#627EEA',
+    gt: 'eth',
+    tokens: [
+      { symbol: 'WETH', name: 'Wrapped Ether', cg: 'weth', address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', decimals: 18 },
+      { symbol: 'WBTC', name: 'Wrapped Bitcoin', cg: 'wrapped-bitcoin', address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals: 8 },
+      { symbol: 'USDC', name: 'USD Coin', cg: 'usd-coin', address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
+      { symbol: 'LINK', name: 'Chainlink', cg: 'chainlink', address: '0x514910771AF9Ca656af840dff83E8264EcF986CA', decimals: 18 },
+      { symbol: 'UNI', name: 'Uniswap', cg: 'uniswap', address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', decimals: 18 },
+      { symbol: 'AAVE', name: 'Aave', cg: 'aave', address: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', decimals: 18 },
+      { symbol: 'PEPE', name: 'Pepe', cg: 'pepe', address: '0x6982508145454Ce325dDbE47a25d4ec3d2311933', decimals: 18 },
     ],
   },
 ]

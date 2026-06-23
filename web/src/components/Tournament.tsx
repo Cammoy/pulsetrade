@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useStore } from '../store'
-import { fmtSign, fmtUsd, fmtPct, pnlColor } from '../format'
+import { fmtSign, fmtUsd, fmtPct, pnlColor, parseAmount } from '../format'
+import { useModal } from '../useModal'
+import NetworkSelect from './NetworkSelect'
 
 const MEDAL = ['🥇', '🥈', '🥉']
 const RISK_CLS: Record<string, string> = {
@@ -11,8 +13,10 @@ const RISK_CLS: Record<string, string> = {
 
 /** Dashboard panel listing running/ended tournaments with live leaderboards. */
 export function TournamentPanel() {
-  const { tournaments, meta, openTournament, selectBot } = useStore()
-  if (tournaments.length === 0) return null
+  const { tournaments, meta, mode, openTournament, selectBot, confirm } = useStore()
+  // Scope to the active workspace — a paper tournament never shows in the live view.
+  const visible = tournaments.filter((t) => (t.mode ?? 'paper') === mode)
+  if (visible.length === 0) return null
   const stratName = (id: string) => meta?.strategies.find((s) => s.id === id)?.name ?? id
 
   const end = (id: string) => fetch(`/api/tournaments/${id}/end`, { method: 'POST' })
@@ -24,7 +28,7 @@ export function TournamentPanel() {
         <h2 className="text-sm font-semibold text-white">🏆 Tournaments</h2>
         <button className="btn-ghost !py-1 text-xs" onClick={() => openTournament(true)}>+ New</button>
       </div>
-      {tournaments.map((t) => (
+      {visible.map((t) => (
         <div key={t.id} className="glass overflow-hidden">
           <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.05] px-4 py-2.5">
             <span className="text-sm font-semibold text-white">{t.name}</span>
@@ -39,14 +43,15 @@ export function TournamentPanel() {
             )}
             <div className="ml-auto flex gap-1.5">
               {t.status === 'running' && (
-                <button className="btn-ghost !py-1 text-xs text-amber-300" onClick={() => { if (confirm(`End tournament and liquidate all contestants to ${t.sweepTo === 'usdt' ? 'USDT' : 'native'}?`)) end(t.id) }}>
+                <button className="btn-ghost !py-1 text-xs text-amber-300" onClick={async () => { if (await confirm({ message: `End tournament and liquidate all contestants to ${t.sweepTo === 'usdt' ? 'USDT' : 'native'}?`, confirmLabel: 'End now', tone: 'danger' })) end(t.id) }}>
                   End now
                 </button>
               )}
-              <button className="btn-ghost !py-1 text-xs text-rose-300" onClick={() => { if (confirm('Delete tournament and all its bots?')) remove(t.id) }}>🗑</button>
+              <button className="btn-ghost !py-1 text-xs text-rose-300" onClick={async () => { if (await confirm({ message: 'Delete tournament and all its bots?', confirmLabel: 'Delete', tone: 'danger' })) remove(t.id) }}>🗑</button>
             </div>
           </div>
-          <table className="w-full text-xs">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-xs">
             <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <tr>{['#', 'Bot', 'Strategy', 'Risk', 'Return', 'P&L', 'W/L', 'Trades'].map((h) => <th key={h} className="px-3 py-1.5 font-medium">{h}</th>)}</tr>
             </thead>
@@ -72,6 +77,7 @@ export function TournamentPanel() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       ))}
     </section>
@@ -91,9 +97,13 @@ export function TournamentModal() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
+  const close = () => openTournament(false)
+  useModal(close)
+
   const net = meta?.networks.find((n) => n.id === network)
   if (!meta) return null
   const strategies = meta.strategies // the 4 backtestable strategies
+  const budgetNum = parseAmount(budget)
 
   const key = (s: string, r: string) => `${s}:${r}`
   const toggle = (s: string, r: string) => setPicked((p) => ({ ...p, [key(s, r)]: !p[key(s, r)] }))
@@ -101,10 +111,11 @@ export function TournamentModal() {
 
   const start = async () => {
     setBusy(true); setErr(null)
+    if (budgetNum === null) { setErr('Enter a valid budget'); setBusy(false); return }
     try {
       const r = await fetch('/api/tournaments', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ network, token: token || net?.tokens[0]?.symbol, budgetUsd: Number(budget), contestants, durationHours: duration ? Number(duration) : undefined, sweepTo }),
+        body: JSON.stringify({ network, token: token || net?.tokens[0]?.symbol, budgetUsd: budgetNum, contestants, durationHours: duration ? Number(duration) : undefined, sweepTo }),
       })
       const data = await r.json()
       if (data.error) setErr(data.error)
@@ -115,8 +126,8 @@ export function TournamentModal() {
 
   return (
     <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openTournament(false)}>
-      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-2xl overflow-auto !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between">
+      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-2xl overflow-auto !rounded-b-none border-white/10 bg-[var(--modal)] p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-white">🏆 New tournament</h2>
             <p className="mt-1 text-xs text-slate-400">Pick contestants — each runs the same coin with an equal budget. They compete to be the most profitable; the leaderboard ranks them live by return %.</p>
@@ -126,9 +137,7 @@ export function TournamentModal() {
 
         <div className="mt-4 grid gap-3 sm:grid-cols-4">
           <label className="block sm:col-span-1"><span className="mb-1 block text-xs text-slate-400">Network</span>
-            <select className="input !py-2" value={network} onChange={(e) => { setNetwork(e.target.value); setToken('') }}>
-              {meta.networks.filter((n) => n.tokens.length > 0).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
-            </select>
+            <NetworkSelect className="input !py-2" value={network} onChange={(id) => { setNetwork(id); setToken('') }} networks={meta.networks.filter((n) => n.tokens.length > 0 && n.tradeable !== false)} />
           </label>
           <label className="block"><span className="mb-1 block text-xs text-slate-400">Coin</span>
             <select className="input !py-2" value={token} onChange={(e) => setToken(e.target.value)}>
@@ -156,7 +165,7 @@ export function TournamentModal() {
               const all: Record<string, boolean> = {}; for (const s of strategies) all[key(s.id, 'balanced')] = true; setPicked(all)
             }}>quick: all strategies @ balanced</button>
           </div>
-          <div className="overflow-hidden rounded-xl border border-white/[0.06]">
+          <div className="overflow-hidden rounded-xl border border-white/[0.08]">
             <table className="w-full text-xs">
               <thead className="bg-white/[0.02] text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <tr><th className="px-3 py-1.5">Strategy</th>{ALL_RISKS.map((r) => <th key={r} className="px-3 py-1.5 capitalize">{r}</th>)}</tr>
@@ -179,8 +188,8 @@ export function TournamentModal() {
         </div>
 
         {err && <div className="mt-3 rounded-xl bg-rose-500/10 p-2.5 text-xs text-rose-300">{err}</div>}
-        <button className="btn-primary mt-4 w-full" disabled={busy || contestants.length < 2 || Number(budget) < 10} onClick={start}>
-          {busy ? 'Starting…' : `🏆 Start tournament (${contestants.length} bots · ${fmtUsd((Number(budget) || 0) * contestants.length)} total)`}
+        <button className="btn-primary mt-4 w-full" disabled={busy || contestants.length < 2 || budgetNum === null || budgetNum < 10} onClick={start}>
+          {busy ? 'Starting…' : `🏆 Start tournament (${contestants.length} bots · ${fmtUsd((budgetNum ?? 0) * contestants.length)} total)`}
         </button>
       </div>
     </div>

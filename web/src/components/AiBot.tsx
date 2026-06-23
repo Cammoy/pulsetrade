@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useStore } from '../store'
-import { fmtUsd } from '../format'
+import { fmtUsd, parseAmount } from '../format'
+import { useModal } from '../useModal'
+import NetworkSelect from './NetworkSelect'
 
 export default function AiBot() {
   const { meta, openAi, refresh, mode } = useStore()
@@ -12,16 +14,21 @@ export default function AiBot() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
+  const close = () => openAi(false)
+  useModal(close)
+
   const net = meta?.networks.find((n) => n.id === network)
   if (!meta) return null
   const aiReady = meta.features?.ai
+  const budgetNum = parseAmount(budget)
 
   const launch = async () => {
+    if (budgetNum === null) return
     setBusy(true); setErr(null)
     try {
       const r = await fetch('/api/ai-bot', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ network, token: token || net?.tokens[0]?.symbol, risk, budgetUsd: Number(budget), sweepTo }),
+        body: JSON.stringify({ network, token: token || net?.tokens[0]?.symbol, risk, budgetUsd: budgetNum, sweepTo }),
       })
       const data = await r.json()
       if (data.error) setErr(data.error)
@@ -32,7 +39,7 @@ export default function AiBot() {
 
   return (
     <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openAi(false)}>
-      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-lg overflow-auto !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-lg overflow-auto !rounded-b-none border-white/10 bg-[var(--modal)] p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-lg font-bold text-white">🤖 AI Trader</h2>
@@ -51,9 +58,7 @@ export default function AiBot() {
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="block"><span className="mb-1 block text-xs text-slate-400">Network</span>
-            <select className="input" value={network} onChange={(e) => { setNetwork(e.target.value); setToken('') }}>
-              {meta.networks.filter((n) => n.tokens.length > 0).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
-            </select>
+            <NetworkSelect className="input" value={network} onChange={(id) => { setNetwork(id); setToken('') }} networks={meta.networks.filter((n) => n.tokens.length > 0 && n.tradeable !== false)} />
           </label>
           <label className="block"><span className="mb-1 block text-xs text-slate-400">Coin</span>
             <select className="input" value={token} onChange={(e) => setToken(e.target.value)}>
@@ -77,8 +82,8 @@ export default function AiBot() {
         </div>
 
         {err && <div className="mt-3 rounded-xl bg-rose-500/10 p-2.5 text-xs text-rose-300">{err}</div>}
-        <button className="btn-primary mt-4 w-full" disabled={busy || Number(budget) < 10} onClick={launch}>
-          {busy ? 'Launching…' : `🤖 Launch AI bot with ${fmtUsd(Number(budget) || 0)}`}
+        <button className="btn-primary mt-4 w-full" disabled={busy || budgetNum === null || budgetNum < 10} onClick={launch}>
+          {busy ? 'Launching…' : `🤖 Launch AI bot with ${fmtUsd(budgetNum ?? 0)}`}
         </button>
         <p className="mt-2 text-[10px] leading-relaxed text-slate-600">
           AI decisions still pass through stop-losses and take profit in {sweepTo === 'usdt' ? 'USDT' : 'the native coin'}. Not financial advice — {mode} mode.

@@ -1,12 +1,22 @@
 import { useState } from 'react'
 import { useStore } from '../store'
 import type { FinderResult, FinderRow } from '../types'
-import { fmtSign, fmtPct, fmtUsd, pnlColor } from '../format'
+import { fmtSign, fmtPct, fmtUsd, pnlColor, parseAmount } from '../format'
+import { useModal } from '../useModal'
+import NetworkSelect from './NetworkSelect'
 
 const RISK_CLS: Record<string, string> = {
   conservative: 'bg-teal-500/10 text-teal-300',
   balanced: 'bg-indigo-500/10 text-indigo-300',
   aggressive: 'bg-rose-500/10 text-rose-300',
+}
+
+// Honest edge label — a statistical read of the backtest, NOT a promise of profit.
+const EDGE_BADGE: Record<string, { label: string; cls: string }> = {
+  significant: { label: 'edge', cls: 'bg-emerald-500/15 text-emerald-300' },
+  weak: { label: 'weak', cls: 'bg-sky-500/15 text-sky-300' },
+  inconclusive: { label: 'unproven', cls: 'bg-slate-500/15 text-slate-400' },
+  'no-edge': { label: 'no edge', cls: 'bg-rose-500/15 text-rose-300' },
 }
 
 const SCOPES = [
@@ -25,6 +35,11 @@ export default function ProfitFinder() {
   const [result, setResult] = useState<FinderResult | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [launching, setLaunching] = useState<string | null>(null)
+
+  useModal(() => openFinder(false))
+
+  const budgetNum = parseAmount(budget)
+  const budgetValid = budgetNum !== null && budgetNum >= 10
 
   if (!meta) return null
 
@@ -98,7 +113,7 @@ export default function ProfitFinder() {
 
   return (
     <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-3" onClick={() => openFinder(false)}>
-      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-3xl overflow-auto !rounded-b-none border-white/10 bg-[#0b0f1a]/95 p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="glass animate-sheet pb-safe max-h-[94vh] w-full max-w-3xl overflow-auto !rounded-b-none border-white/10 bg-[var(--modal)] p-5 sm:!rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-white">💡 Profit Finder</h2>
@@ -110,13 +125,13 @@ export default function ProfitFinder() {
           <button className="btn-ghost !px-2.5 !py-1" onClick={() => openFinder(false)}>✕</button>
         </div>
 
-        <div className="mt-3 flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+        <div className="mt-3 flex items-center gap-1 seg-track p-0.5 text-xs">
           {SCOPES.map((s) => (
             <button
               key={s.id}
               onClick={() => { setScope(s.id); setResult(null); setErr(null) }}
               title={s.blurb}
-              className={`flex-1 cursor-pointer rounded-lg px-3 py-1.5 font-semibold transition-colors ${scope === s.id ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex-1 cursor-pointer rounded-lg px-3 py-1.5 font-semibold transition-colors ${scope === s.id ? 'seg-active' : 'text-slate-400 hover:text-slate-200'}`}
             >
               {s.label}
             </button>
@@ -135,21 +150,21 @@ export default function ProfitFinder() {
           {scope !== 'top100' && (
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-slate-400">Network</span>
-              <select className="input !w-40" value={network} onChange={(e) => setNetwork(e.target.value)}>
-                {meta.networks
-                  .filter((n) => n.tokens.length > 0)
-                  .filter((n) => scope !== 'trending' || n.evm !== false)
-                  .map((n) => (
-                    <option key={n.id} value={n.id}>{n.name}</option>
-                  ))}
-              </select>
+              <NetworkSelect
+                className="input !w-40"
+                value={network}
+                onChange={setNetwork}
+                networks={meta.networks
+                  .filter((n) => n.tokens.length > 0 && n.tradeable !== false)
+                  .filter((n) => scope !== 'trending' || n.evm !== false)}
+              />
             </label>
           )}
-          <button className="btn-primary" disabled={loading || Number(budget) < 10} onClick={run}>
+          <button className="btn-primary" disabled={loading || !budgetValid} onClick={run}>
             {loading ? 'Backtesting every combination…' : '🔍 Find max profit'}
           </button>
         </div>
-        {Number(budget) < 10 && <p className="mt-1 text-[11px] text-amber-400">Minimum stake is $10.</p>}
+        {!budgetValid && <p className="mt-1 text-[11px] text-amber-300">Minimum stake is $10.</p>}
         {err && <div className="mt-3 rounded-xl bg-rose-500/10 p-2.5 text-xs text-rose-300">{err}</div>}
         {loading && (
           <div className="mt-4 animate-pulse rounded-xl bg-white/[0.03] p-4 text-center text-xs text-slate-500">
@@ -163,10 +178,15 @@ export default function ProfitFinder() {
 
         {result && (
           <div className="mt-4 space-y-3">
+            {result.caveat && (
+              <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.06] p-2.5 text-[11px] leading-relaxed text-amber-300">
+                ⚠ {result.caveat}
+              </div>
+            )}
             {best && (
               <div className={`rounded-xl border p-3 ${best.profitUsd > 0 ? 'border-emerald-400/40 bg-emerald-500/[0.07]' : 'border-amber-400/40 bg-amber-500/[0.07]'}`}>
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  {best.profitUsd > 0 ? 'Max profit, last 30 days' : 'Best result, last 30 days (nothing was profitable — consider waiting)'}
+                  {best.profitUsd > 0 ? 'Best out-of-sample profit' : 'Best out-of-sample result (nothing profitable out-of-sample — consider waiting)'}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span className={`text-2xl font-bold tabular-nums ${pnlColor(best.profitUsd)}`}>{fmtSign(best.profitUsd)}</span>
@@ -177,11 +197,11 @@ export default function ProfitFinder() {
               </div>
             )}
 
-            <div className="max-h-72 overflow-auto rounded-xl border border-white/[0.06]">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-[#0c101c] text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <div className="max-h-72 overflow-auto rounded-xl border border-white/[0.08]">
+              <table className="w-full min-w-[640px] text-xs">
+                <thead className="sticky top-0 bg-[var(--head)] text-left text-[10px] uppercase tracking-wider text-slate-500">
                   <tr>
-                    {['#', 'Coin', scope === 'top100' ? '24h' : 'Net', 'Strategy', 'Risk', `Profit on ${fmtUsd(Number(budget))}`, 'Return', 'Win rate', 'Max DD', 'Trades', ''].map((h) => (
+                    {['#', 'Coin', scope === 'top100' ? '24h' : 'Net', 'Strategy', 'Risk', `Profit on ${fmtUsd(Number(budget))}`, 'Return (OOS)', 'Edge', 'Win rate', 'Max DD', 'Trades', ''].map((h) => (
                       <th key={h} className="px-2.5 py-2 font-medium whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -201,9 +221,24 @@ export default function ProfitFinder() {
                         <td className="px-2.5 py-1.5 text-slate-300">{row.strategyName}</td>
                         <td className="px-2.5 py-1.5"><span className={`chip capitalize ${RISK_CLS[row.risk]}`}>{row.risk}</span></td>
                         <td className={`px-2.5 py-1.5 font-semibold ${pnlColor(row.profitUsd)}`}>{fmtSign(row.profitUsd)}</td>
-                        <td className={`px-2.5 py-1.5 ${pnlColor(row.returnPct)}`}>{fmtPct(row.returnPct)}</td>
+                        <td className={`px-2.5 py-1.5 ${pnlColor(row.returnPct)}`} title={`Out-of-sample (final third). Typical config for this coin (median of all strategy×risk combos tried): ${fmtPct(row.cohortMedianReturnPct)} — this row is the BEST of many tries, so expect closer to the typical. In-sample full-window: ${fmtPct(row.inSampleReturnPct)} — shown for reference; it overfits.`}>
+                          {fmtPct(row.returnPct)}
+                          <span className="ml-1 text-[10px] text-slate-500" title="Typical (median) result across all strategy/risk combos tried for this coin — the best row above flatters luck.">typ {fmtPct(row.cohortMedianReturnPct)}</span>
+                        </td>
+                        <td className="px-2.5 py-1.5">
+                          {row.edge ? (
+                            <span
+                              className={`chip ${EDGE_BADGE[row.edge.verdict]?.cls ?? 'bg-slate-500/15 text-slate-400'}`}
+                              title={`Backtest edge label — NOT a guarantee. Expectancy ${fmtPct(row.edge.expectancyPct)}/trade · t-stat ${row.edge.tStat} · Sharpe ${row.edge.sharpe}. "edge" needs a positive walk-forward AND statistical significance; most strategies read "no edge" or "unproven".`}
+                            >
+                              {EDGE_BADGE[row.edge.verdict]?.label ?? row.edge.verdict}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-600">—</span>
+                          )}
+                        </td>
                         <td className="px-2.5 py-1.5 text-slate-400">{row.winRate === null ? '—' : `${row.winRate}%`}</td>
-                        <td className="px-2.5 py-1.5 text-amber-300/80">−{row.maxDrawdownPct}%</td>
+                        <td className="px-2.5 py-1.5 text-amber-300">−{row.maxDrawdownPct}%</td>
                         <td className="px-2.5 py-1.5 text-slate-400">{row.trades}</td>
                         <td className="px-2.5 py-1.5">
                           {row.launch ? (
@@ -226,13 +261,15 @@ export default function ProfitFinder() {
               </table>
             </div>
             {result.skipped.length > 0 && (
-              <p className="text-[11px] text-amber-400/80">
+              <p className="text-[11px] text-amber-300">
                 ⚠ No market data right now for: {result.skipped.join(', ')} (rate limited) — run again in a minute for full coverage.
               </p>
             )}
             <p className="text-[10px] leading-relaxed text-slate-600">
-              Ranked by realized backtest profit on identical real 30-day history, including gas and slippage. Past performance does not
-              guarantee future results — launching starts the bot in {useStore.getState().mode} mode with this exact configuration.
+              Ranked by OUT-OF-SAMPLE backtest profit — the final third of the 30-day window, after a two-thirds warm-up — including gas
+              and slippage, to guard against overfit. The <span className="text-slate-500">Edge</span> column is a statistical read
+              (per-trade expectancy significance + walk-forward), not a promise — most strategies honestly read “no edge” or “unproven”.
+              Past performance does not guarantee future results; launching starts the bot in {useStore.getState().mode} mode with this exact configuration.
             </p>
           </div>
         )}

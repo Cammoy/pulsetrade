@@ -77,12 +77,48 @@ at-a-glance read on crypto overall:
 ## 4. Profit Finder
 
 "Here is $100 — show me the max profit." Enter a stake and network; it backtests
-every strategy × risk × coin on that network over the same real 30-day history
-(fees and slippage included) and ranks the outcomes by profit. One click
-launches the winner with that exact configuration.
+every strategy × risk × coin on that network over the same real 30-day history and
+ranks the outcomes. One click launches the winner with that exact configuration.
+
+The numbers are deliberately conservative so they don't over-promise:
+
+- **Realistic costs.** Each side of a trade is charged an LP fee + slippage/impact
+  (~1%/side) plus gas, including the one-time approval before the first sell. A
+  too-cheap model would rank the highest-churn, thinnest-pool configs as winners —
+  this is what stops that. Thin/sniper pools still cost more than any flat rate models.
+- **Walk-forward ranking.** Rows rank on **out-of-sample** return (the final third of
+  the window, after a two-thirds warm-up), not the full-window fit that overfits.
+- **Best vs typical.** Each coin is tried under many strategy/risk combos; the table
+  headlines the BEST, but also shows the **typical** (median across all combos) result —
+  because picking the best of many tries flatters luck (selection bias).
+- **Survivorship.** The top-100 / trending scopes only test coins that ALREADY moved;
+  that selection is biased and past momentum rarely repeats.
 
 Results are evidence, not a guarantee — past performance never assures future
-returns.
+returns, and net returns depend heavily on fees and slippage.
+
+---
+
+## 4a. Profit Calculator
+
+The **🧮 Profit Calculator** answers "what would I make?" instantly. Enter an
+entry price, how much you'd put in (a **USD amount** or a **coin quantity**) and a
+target, and it shows the profit, %, ROI multiple, break-even and a live **profit
+curve** across exit prices, plus scenario cards at ½× / 2× / 3× / 5× / 10×. The
+math is a pure, unit-tested long-spot round-trip with an optional **per-side
+fee** — a planning tool, not a forecast.
+
+**Search a coin.** Start typing a name (e.g. `bitcoin`, `pepe`) and pick from the
+autocomplete; the calculator pulls that coin's **live price, market cap and
+circulating supply** and fills the entry price for you.
+
+**Target a price — or a market cap.** With a coin selected you can switch the exit
+from *by price* to *by market cap* and ask "what if it hits a $5B / $10B cap?".
+The implied price is computed the only correct way — **price = target market cap ÷
+circulating supply** — which is exactly why the live supply matters and why the
+mode only enables for a coin with known supply. The milestone chips re-scale to
+multiples of the coin's current market cap, and switching back to *by price*
+carries the implied price across so the numbers stay continuous.
 
 ---
 
@@ -154,6 +190,20 @@ markers and a plain-English activity log of every decision.
 The **Monthly P&L** panel is a persisted ledger: realized P&L, win rate, fees,
 native swept, volume and a per-tolerance breakdown for each calendar month. It's
 independent of the trade list, so it survives trade trimming and bot deletion.
+
+### Staking (Portfolio → Staking)
+
+The **🔒 Staking** tab in the Portfolio is a read-only, keys-free view of
+everything you have **staked**, charted. Paste an Ethereum wallet (liquid-staking
+tokens — stETH, wstETH, rETH, cbETH), a Solana wallet (native stake accounts,
+auto-detected) and/or your ICP neuron IDs; each position is valued live, totalled,
+and broken down by network in a donut with per-position value bars. Positions that
+are unlocking (ICP dissolving neurons, Solana deactivating stake) show the **exact
+days remaining and the unlock date**; every position shows an **estimated APY** and
+projected rewards (per year, plus what you'd earn before an unlock). Unlock dates
+are exact from on-chain dissolve/deactivation state; APY and reward figures are
+estimates. No keys, no transactions — ICP neuron data is the public on-chain info
+from the governance canister.
 
 ---
 

@@ -23,14 +23,23 @@ test('solana and icp networks exist and are flagged non-EVM', () => {
   assert.ok(tokenOf('icp', 'ckBTC'))
 })
 
-test('the original five networks stay EVM with valid 0x USDT addresses', () => {
-  const evm = NETWORKS.filter((n) => n.evm)
-  assert.equal(evm.length, 5)
-  for (const n of evm) {
+test('the five TRADEABLE EVM networks have valid 0x USDT addresses', () => {
+  const tradeable = NETWORKS.filter((n) => n.evm && n.tradeable !== false)
+  assert.equal(tradeable.length, 5)
+  for (const n of tradeable) {
     assert.match(n.usdt.address, /^0x[a-fA-F0-9]{40}$/, `${n.id} USDT address`)
     assert.equal(n.usdt.cg, 'tether')
     for (const t of n.tokens) assert.match(t.address, /^0x[a-fA-F0-9]{40}$/, `${n.id}/${t.symbol}`)
   }
+})
+
+test('Ethereum mainnet is a HOLDINGS-ONLY EVM network (portfolio + tracking, never traded)', () => {
+  const eth = NETWORKS.find((n) => n.id === 'ethereum')!
+  assert.ok(eth, 'ethereum is present')
+  assert.equal(eth.evm, true)
+  assert.equal(eth.tradeable, false, 'holdings-only — excluded from every trading surface')
+  assert.equal(eth.chainId, 1)
+  assert.ok(eth.tokens.length > 0 && eth.tokens.every((t) => /^0x[a-fA-F0-9]{40}$/.test(t.address)), 'valid mainnet token addresses')
 })
 
 test('price-id universe covers the new chains', () => {

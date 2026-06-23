@@ -114,34 +114,65 @@ export async function discoverPools(
 
 export interface SafeFeedOptions {
   minLiquidityUsd: number
+  minVolume24hUsd: number // real recent turnover — a candidate must be ALIVE, never a $0-volume dead pool
   minHolders: number
   maxTopHolderPct: number
   maxTop10Pct: number
   minScore: number
+  // OPT-IN freshness gate (used by the Auto-Sniper): when set, only pools whose
+  // on-chain creation time is within this many minutes survive — so the autopilot
+  // SNIPES genuinely new launches and never an established coin that's months or
+  // years old. Fail-closed: a pool with an unknown creation time is excluded.
+  // Left undefined for the manual sniper feed + backtest, which keep showing every
+  // age the user explicitly browses.
+  maxAgeMinutes?: number
 }
 
 export const SAFE_DEFAULTS: SafeFeedOptions = {
-  minLiquidityUsd: 10_000,
+  // A "snipe freshly launched pools" tool must reach genuinely new pools, which
+  // start small. The safety comes from the sellability/honeypot gate and the
+  // full risk screen — NOT from a high liquidity floor — so keep this low.
+  minLiquidityUsd: 2_000,
+  // …but a recommendation must still be ALIVE: require real recent turnover so a
+  // zero-volume / abandoned pool (the "very little liquidity, 0 txns" kind) can never
+  // surface, even if its liquidity happens to clear the floor. Trending raises this far.
+  minVolume24hUsd: 1_000,
   minHolders: 50,
   // Dominance caps exclude burned/locked supply. 40/85 keeps out true
   // single-whale setups without rejecting every project with a treasury.
   maxTopHolderPct: 40,
   maxTop10Pct: 85,
-  minScore: 55,
+  minScore: 45,
 }
 
 export interface SafePool extends PoolCandidate {
   report: RiskReport
 }
 
-/** Hard pre-filter on the batched GoPlus payload. Pure — unit-tested. */
+/**
+ * Hard pre-filter on the batched GoPlus payload. Pure — unit-tested.
+ *
+ * Design: the ONLY hard rejects here are confirmed-unsellable signals
+ * (honeypot / cannot-sell-all) and a genuine over-concentration of live wallets.
+ * Everything else — un-indexed holders on a minutes-old token, a missing GoPlus
+ * payload during a rate-limit window, an as-yet-unverified contract — is NOT a
+ * danger signal and must not eliminate a legitimate fresh launch. Those flow on
+ * to the full screen, where honeypot.is is the authoritative sellability gate
+ * and assess() blocks anything actually dangerous (and blocks blind when BOTH
+ * providers are silent).
+ */
 export function passesHardFilter(gp: Record<string, any> | undefined, o: SafeFeedOptions): boolean {
-  if (!gp) return false // no security data ⇒ never show
-  if (gp.is_open_source !== '1') return false // must be verified
-  if (gp.is_honeypot === '1' || gp.cannot_sell_all === '1') return false // must be sellable
+  if (!gp) return true // GoPlus rate-limited / not indexed yet — let honeypot.is be the gate in assess()
+  if (gp.is_honeypot === '1' || gp.cannot_sell_all === '1') return false // confirmed unsellable — hard gate
   const holders = Number(gp.holder_count)
-  if (!Number.isFinite(holders) || holders < o.minHolders) return false // multiple holders
-  if (Array.isArray(gp.holders) && gp.holders.length) {
+  const hasHolderData = Array.isArray(gp.holders) && gp.holders.length > 0
+  const indexed = (Number.isFinite(holders) && holders > 0) || hasHolderData
+  // Only enforce the holder floor once GoPlus has actually INDEXED holders. A
+  // freshly-launched token reports holder_count 0 because it isn't indexed yet,
+  // not because nobody holds it — rejecting on that makes the "new" feed
+  // structurally always-empty. Sellability is still enforced above.
+  if (indexed && Number.isFinite(holders) && holders < o.minHolders) return false
+  if (hasHolderData) {
     // Dominance must be measured over real END-USER wallets (EOAs). Infrastructure
     // — DEX pools, bridges, CEX wallets, lockers, burn addresses — legitimately
     // holds large shares and is NOT a rug signal, so exclude it. GoPlus flags
@@ -182,10 +213,18 @@ export async function discoverSafePools(
 ): Promise<{ pools: SafePool[]; scanned: number; error?: string }> {
   const net = networkById(network)
   if (!net) return { pools: [], scanned: 0, error: 'unknown network' }
-  if (!net.evm || !net.gt)
-    return { pools: [], scanned: 0, error: `Sniping is not available on ${net.name} — safety screening covers EVM networks only` }
+  if (!net.evm || !net.gt || net.tradeable === false)
+    return { pools: [], scanned: 0, error: `Sniping is not available on ${net.name} — safety screening covers tradeable EVM networks only` }
   const o = { ...SAFE_DEFAULTS, ...opts }
-  const key = `${network}:${mode}:${o.minLiquidityUsd}`
+  // "Trending" surfaces ESTABLISHED movers, not fresh launches — demand real depth AND
+  // turnover so the trending/Profit-Finder feed only ever shows liquid, actively-traded
+  // tokens (never a thin, dead pool). Fresh-launch ("new") keeps the lighter floors but
+  // still requires the alive-turnover gate below.
+  if (mode === 'trending') {
+    o.minLiquidityUsd = Math.max(o.minLiquidityUsd, 25_000)
+    o.minVolume24hUsd = Math.max(o.minVolume24hUsd, 25_000)
+  }
+  const key = `${network}:${mode}:${o.minLiquidityUsd}:${o.minVolume24hUsd}:${o.maxAgeMinutes ?? 0}`
   const hit = safeCache.get(key)
   if (hit && now - hit.at < SAFE_TTL) return hit.result
 
@@ -196,9 +235,25 @@ export async function discoverSafePools(
   // (the feed often lists the same token across several pools), and no
   // stables / wrapped natives — safe, but pointless to snipe. Screen the most
   // liquid candidates first (capped for provider rate limits).
+  // Freshness gate (opt-in via maxAgeMinutes — the Auto-Sniper sets it). Only pools
+  // created within the window are eligible, so the autopilot enters genuinely NEW
+  // launches and never an established coin that merely surfaces in a feed. Fail-closed:
+  // an unknown creation time (createdAt/ageMinutes null) is treated as "can't prove
+  // it's new" → excluded. No-op when unset (manual feed + backtest).
+  const maxAge = o.maxAgeMinutes && o.maxAgeMinutes > 0 ? o.maxAgeMinutes : null
+  const isFreshEnough = (p: PoolCandidate) =>
+    maxAge == null || (p.createdAt != null && p.ageMinutes != null && p.ageMinutes <= maxAge)
+
   const seenTok = new Set<string>()
   const candidates = pools
-    .filter((p) => (p.liquidityUsd ?? 0) >= o.minLiquidityUsd && (p.priceUsd ?? 0) > 0 && /^0x[a-fA-F0-9]{40}$/.test(p.tokenAddress))
+    .filter(
+      (p) =>
+        (p.liquidityUsd ?? 0) >= o.minLiquidityUsd &&
+        (p.volume24hUsd ?? 0) >= o.minVolume24hUsd && // alive: real recent turnover, never a dead/zero-volume pool
+        (p.priceUsd ?? 0) > 0 &&
+        /^0x[a-fA-F0-9]{40}$/.test(p.tokenAddress),
+    )
+    .filter(isFreshEnough) // only genuinely-new launches when the Auto-Sniper asks
     .filter((p) => !BORING_SYMBOLS.has(p.tokenSymbol.toLowerCase()))
     .sort((a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0))
     .filter((p) => {
@@ -222,8 +277,8 @@ export async function discoverSafePools(
       const gpMap = await batchGoPlus(net.chainId, [p.tokenAddress])
       const gp = gpMap.get(p.tokenAddress.toLowerCase())
       if (gp) gpHits++
-      if (!passesHardFilter(gp, o)) continue // verified · sellable · distributed
-      const report = await screenPrefetched(net.id, p.tokenAddress, p.tokenSymbol, gp!)
+      if (!passesHardFilter(gp, o)) continue // sellable · distributed (missing gp flows to honeypot.is)
+      const report = await screenPrefetched(net.id, p.tokenAddress, p.tokenSymbol, gp ?? null)
       if (report.tradeable && report.score >= o.minScore) safe.push({ ...p, report })
     }
   }
@@ -236,19 +291,18 @@ export async function discoverSafePools(
   if (safe.length === 0 && hit && hit.result.pools.length > 0 && now - hit.at < SAFE_TTL * 2) {
     return hit.result
   }
-  // If the security provider answered for NONE of the candidates, this was a
-  // rate-limit/outage, not a verdict — report it and don't cache the empty.
-  if (candidates.length >= 3 && gpHits === 0) {
-    return { pools: safe, scanned: pools.length, error: 'security provider is rate-limiting — rescan in a minute' }
-  }
-  // Partial coverage: surface it (results still flow) and don't cache, so the
-  // next rescan re-checks the unscreened candidates (1h GoPlus cache makes
-  // coverage accumulate across rescans).
+  // Partial / zero GoPlus coverage is now NORMAL — honeypot.is is the primary
+  // sellability gate, so candidates still get screened and safe ones still flow.
+  // Only surface a rate-limit note when we found NOTHING (so the user knows an
+  // empty feed is a provider hiccup, not "no safe tokens"). Don't cache partial
+  // scans, so coverage accumulates as the 1h GoPlus cache fills on rescans.
   if (gpHits < candidates.length) {
     return {
       pools: safe,
       scanned: pools.length,
-      error: `screened ${gpHits} of ${candidates.length} candidates (provider rate limit) — rescan shortly for full coverage`,
+      ...(safe.length === 0 && candidates.length >= 3
+        ? { error: 'security provider is rate-limiting — rescan in a minute for more candidates' }
+        : {}),
     }
   }
   safeCache.set(key, { at: now, result })

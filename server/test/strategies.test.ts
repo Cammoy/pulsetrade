@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { strategyById, type Ctx } from '../src/strategies.js'
+import { strategyById, STRATEGIES, type Ctx } from '../src/strategies.js'
 import { emaSeries } from '../src/indicators.js'
 import { RISK } from '../src/risk.js'
 
@@ -169,4 +169,41 @@ test('risk tiers scale entries: aggressive buys more than conservative', () => {
   const c = mr.decide(ctx({ closes: falling, price: falling.at(-1)!, params: RISK.conservative }))
   assert.ok(a && c && a.type === 'buy' && c.type === 'buy')
   assert.ok(a.usd > c.usd, `aggressive ${a.usd} > conservative ${c.usd}`)
+})
+
+// ── #4 Momentum Factor (time-series momentum + vol sizing + asymmetric trailing exit) ──
+const factor = strategyById('factor')!
+const ramp = (len: number, from: number, step: number) => Array.from({ length: len }, (_, i) => from + i * step)
+
+test('factor is registered in the backtestable strategy list', () => {
+  assert.ok(STRATEGIES.some((s) => s.id === 'factor'), 'momentum factor is wizard/backtestable')
+})
+
+test('factor: enters on strong trailing momentum above the 50h average (vol-sized)', () => {
+  const closes = ramp(60, 100, 1) // steady uptrend 100→159
+  const a = factor.decide(ctx({ closes, price: closes.at(-1)!, cashUsd: 1000 }))
+  assert.ok(a && a.type === 'buy', 'strong momentum + uptrend → entry')
+  assert.ok(a.usd > 0 && a.usd <= 1000)
+})
+
+test('factor: no entry in a downtrend (price below its long average)', () => {
+  const closes = ramp(60, 160, -1) // steady downtrend 160→101
+  assert.equal(factor.decide(ctx({ closes, price: closes.at(-1)! })), null)
+})
+
+test('factor: no entry on sub-threshold (chop) momentum even above the average', () => {
+  const closes = [...ramp(50, 100, 0.02), ...Array(10).fill(101)]
+  assert.equal(factor.decide(ctx({ closes, price: 101 })), null, 'under ~3% trailing momentum is rejected (fees/chop)')
+})
+
+test('factor: an asymmetric trailing stop locks a winner once it gives back from the peak', () => {
+  const closes = ramp(60, 100, 1)
+  const a = factor.decide(ctx({ closes, price: 120, position: { qty: 1, avgCostUsd: 100, costUsd: 100 }, state: { peak: 130 } }))
+  assert.ok(a && a.type === 'sell' && a.exit, 'gave back >5% off peak while +20% in profit → trailing exit')
+})
+
+test('factor: the hard stop-loss still fires below the risk-tier stop', () => {
+  const closes = ramp(60, 100, 1)
+  const a = factor.decide(ctx({ closes, price: 90, position: { qty: 1, avgCostUsd: 100, costUsd: 100 }, state: {} }))
+  assert.ok(a && a.type === 'sell' && /Stop-loss/.test(a.reason))
 })

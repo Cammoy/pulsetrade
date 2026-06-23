@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import { useStore } from '../store'
+import { botsForMode } from '../stats'
 import { fmtUsd, fmtSign, fmtQty, fmtPrice, hhmm, pnlColor } from '../format'
 
 export default function TradeList() {
-  const { trades, bots, showTrades, toggleTrades, lastTradeId } = useStore()
+  const { trades, bots, mode, showTrades, toggleTrades, lastTradeId } = useStore()
   const [botFilter, setBotFilter] = useState('all')
   const [sideFilter, setSideFilter] = useState<'all' | 'buy' | 'sell'>('all')
 
-  const filtered = trades.filter(
+  // Scope to the ACTIVE workspace — the Live view shows only live trades (and a paper
+  // trade never appears in Live), matching the Monthly P&L ledger above it. [paper/live]
+  const scoped = trades.filter((t) => (t.mode ?? 'paper') === mode)
+  const modeBots = botsForMode(bots, mode)
+  const filtered = scoped.filter(
     (t) => (botFilter === 'all' || t.botId === botFilter) && (sideFilter === 'all' || t.side === sideFilter),
   )
   const botName = (id: string) => bots.find((b) => b.id === id)?.name ?? '(deleted)'
@@ -19,7 +24,7 @@ export default function TradeList() {
         onClick={toggleTrades}
       >
         <span className="text-sm font-semibold text-white">Trade history</span>
-        <span className="chip bg-white/[0.06] text-slate-400">{trades.length}</span>
+        <span className="chip bg-white/[0.06] text-slate-400">{scoped.length}</span>
         <span className="ml-auto text-xs text-slate-500">{showTrades ? '▲ hide' : '▼ show'}</span>
       </button>
 
@@ -28,19 +33,19 @@ export default function TradeList() {
           <div className="flex flex-wrap gap-2 border-t border-white/[0.05] px-4 py-2.5">
             <select className="input !w-auto !py-1.5 text-xs" value={botFilter} onChange={(e) => setBotFilter(e.target.value)}>
               <option value="all">All bots</option>
-              {bots.map((b) => (
+              {modeBots.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                 </option>
               ))}
             </select>
-            <div className="flex items-center rounded-xl border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+            <div className="seg-track flex items-center p-0.5 text-xs">
               {(['all', 'buy', 'sell'] as const).map((s) => (
                 <button
                   key={s}
                   onClick={() => setSideFilter(s)}
                   className={`cursor-pointer rounded-lg px-3 py-1 font-medium capitalize transition-colors ${
-                    sideFilter === s ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'
+                    sideFilter === s ? 'seg-active' : 'text-slate-500 hover:text-slate-300'
                   }`}
                 >
                   {s}
@@ -50,8 +55,8 @@ export default function TradeList() {
           </div>
 
           <div className="max-h-80 overflow-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-[#0c101c] text-left text-[10px] uppercase tracking-wider text-slate-500">
+            <table className="w-full min-w-[720px] text-xs">
+              <thead className="sticky top-0 bg-[var(--head)] text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <tr>
                   {['Time', 'Bot', 'Side', 'Asset', 'Qty', 'Price', 'Value', 'Fee', 'P&L', 'Swept', 'Reason'].map((h) => (
                     <th key={h} className="px-3 py-2 font-medium whitespace-nowrap">

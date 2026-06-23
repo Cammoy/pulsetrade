@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useStore } from '../store'
+import { useStore, jpost } from '../store'
 import type { WalletProfile } from '../types'
-import { fmtUsd, fmtSign, pnlColor, timeAgo } from '../format'
+import { fmtUsd, fmtSign, pnlColor, timeAgo, parseAmount, shortAddr as short } from '../format'
+import { useModal } from '../useModal'
 import Sparkline from './Sparkline'
 
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 /**
  * Per-wallet smart-money account view: net-flow chart, per-token flows, recent
@@ -12,7 +12,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
  * automatically (a budget that mirrors every buy it makes).
  */
 export default function WalletAccount({ address, onClose }: { address: string; onClose: () => void }) {
-  const { meta, follows, refresh } = useStore()
+  const { meta, follows, refresh, confirm, notify } = useStore()
   const [profile, setProfile] = useState<WalletProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -23,6 +23,8 @@ export default function WalletAccount({ address, onClose }: { address: string; o
   const [sweepTo, setSweepTo] = useState<'native' | 'usdt'>('native')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  useModal(onClose)
 
   const load = async () => {
     setLoading(true)
@@ -36,12 +38,15 @@ export default function WalletAccount({ address, onClose }: { address: string; o
 
   const existingFollow = follows.find((f) => f.walletAddress.toLowerCase() === address.toLowerCase() && f.enabled)
 
+  const budgetNum = parseAmount(budget)
+  const perTradeNum = parseAmount(perTrade)
   const startFollow = async () => {
+    if (budgetNum === null || perTradeNum === null) { setErr('Enter valid amounts'); return }
     setBusy(true); setErr(null)
     try {
       const r = await fetch('/api/follows', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ walletAddress: address, label: profile?.label, totalBudgetUsd: Number(budget), perTradeUsd: Number(perTrade), risk, sweepTo }),
+        body: JSON.stringify({ walletAddress: address, label: profile?.label, totalBudgetUsd: budgetNum, perTradeUsd: perTradeNum, risk, sweepTo }),
       })
       const data = await r.json()
       if (data.error) setErr(data.error)
@@ -49,12 +54,22 @@ export default function WalletAccount({ address, onClose }: { address: string; o
     } catch { setErr('Engine unreachable') }
     setBusy(false)
   }
-  const stopFollow = async (id: string, liquidate: boolean) => { await fetch(`/api/follows/${id}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ liquidate }) }); await refresh() }
-  const deleteFollow = async (id: string) => { await fetch(`/api/follows/${id}`, { method: 'DELETE' }); await refresh() }
+  // Money-moving (stop & liquidate sells real positions) — surface any server error instead
+  // of swallowing it; always refresh so the UI reflects the true server state on failure.
+  const stopFollow = async (id: string, liquidate: boolean) => {
+    const out = await jpost<{ error?: string }>(`/api/follows/${id}/stop`, { liquidate })
+    if (out.error) notify(out.error, 'error')
+    await refresh()
+  }
+  const deleteFollow = async (id: string) => {
+    const out = await jpost<{ error?: string }>(`/api/follows/${id}`, undefined, 'DELETE')
+    if (out.error) notify(out.error, 'error')
+    await refresh()
+  }
 
   if (!meta) return null
   const s = profile?.stats
-  const maxConcurrent = Math.max(1, Math.floor((Number(budget) || 0) / (Number(perTrade) || 1)))
+  const maxConcurrent = Math.max(1, Math.floor((budgetNum ?? 0) / (perTradeNum || 1)))
 
   return (
     <div className="space-y-3">
@@ -69,6 +84,31 @@ export default function WalletAccount({ address, onClose }: { address: string; o
           <span className="chip bg-amber-500/10 text-amber-300">needs ETHERSCAN_API_KEY for live data</span>
         )}
       </div>
+
+      {profile?.note && (
+        <div className="rounded-xl border border-indigo-400/20 bg-indigo-500/[0.05] px-3 py-2 text-xs text-indigo-100">
+          {profile.category && <span className="chip mr-2 bg-white/[0.08] capitalize text-slate-300">{profile.category.replace('-', ' ')}</span>}
+          {profile.note}
+        </div>
+      )}
+
+      {profile?.score && profile.score.tier !== 'thin' && (
+        <div
+          className={`rounded-xl border px-3 py-2 text-[11px] leading-relaxed ${
+            profile.score.tier === 'proven'
+              ? 'border-emerald-400/30 bg-emerald-500/[0.06] text-emerald-300'
+              : profile.score.tier === 'promising'
+                ? 'border-sky-400/30 bg-sky-500/[0.06] text-sky-300'
+                : 'border-white/[0.08] bg-white/[0.02] text-slate-400'
+          }`}
+          title={profile.score.caveat}
+        >
+          <span className="font-semibold uppercase tracking-wide">Copy-worthiness {profile.score.score}/100 · {profile.score.tier}</span>{' '}
+          — {profile.score.roundTrips} closed position{profile.score.roundTrips === 1 ? '' : 's'}, {fmtSign(profile.score.realizedFlowUsd)} net realized flow
+          {profile.score.recencyDays != null ? `, last active ${Math.round(profile.score.recencyDays)}d ago` : ''}.
+          <span className="mt-1 block text-[10px] opacity-80">Flow heuristic from on-chain transfers, not verified PnL — hover for the caveat. Copy-trading is only as good as the wallet you mirror.</span>
+        </div>
+      )}
 
       {loading && <div className="py-8 text-center text-xs text-slate-500">Loading on-chain activity across all chains…</div>}
 
@@ -88,34 +128,86 @@ export default function WalletAccount({ address, onClose }: { address: string; o
             ))}
           </div>
 
-          <div className="rounded-xl border border-white/[0.06] p-3">
+          <div className="rounded-xl border border-white/[0.08] p-3">
             <div className="mb-1 flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-300">Cumulative net flow (curated tokens)</span>
               {s.lastTs && <span className="text-[10px] text-slate-500">last activity {timeAgo(s.lastTs)}</span>}
             </div>
             {s.series.length >= 2
-              ? <Sparkline points={s.series.map((p) => p.v)} baseline={0} width={620} height={70} />
+              ? <div className="max-w-full overflow-hidden"><Sparkline points={s.series.map((p) => p.v)} baseline={0} width={320} height={70} /></div>
               : <div className="py-4 text-center text-[11px] text-slate-600">{profile?.tracking ? 'No curated-token activity recorded for this wallet yet.' : 'Enable tracking to chart this account.'}</div>}
           </div>
 
+          {/* ── Comprehensive holdings (all tokens, est. from on-chain activity) ── */}
+          {profile?.holdings && profile.holdings.some((h) => !h.suspicious) && (() => {
+            const real = profile.holdings.filter((h) => !h.suspicious)
+            const spamCount = profile.holdings.length - real.length
+            const priced = real.filter((h) => h.usd !== null && h.usd > 0)
+            const totalUsd = priced.reduce((sum, h) => sum + (h.usd ?? 0), 0)
+            const COLORS = ['#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f43f5e']
+            return (
+              <div className="rounded-xl border border-white/[0.08] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-300">💼 Holdings <span className="font-normal text-slate-600">· {real.length} tokens · est. from activity</span></span>
+                  {totalUsd > 0 && <span className="text-sm font-bold text-white tabular-nums">{fmtUsd(totalUsd)}</span>}
+                </div>
+                {/* Allocation bar — portfolio breakdown by USD value */}
+                {totalUsd > 0 && (
+                  <div className="mb-2.5 flex h-2.5 overflow-hidden rounded-full bg-white/[0.04]">
+                    {priced.slice(0, 8).map((h, i) => (
+                      <div key={`${h.network}:${h.token}`} style={{ width: `${(h.usd! / totalUsd) * 100}%`, background: COLORS[i % COLORS.length] }} title={`${h.token} · ${fmtUsd(h.usd!)} (${((h.usd! / totalUsd) * 100).toFixed(1)}%)`} />
+                    ))}
+                  </div>
+                )}
+                <div className="max-h-56 overflow-y-auto overflow-x-auto">
+                  <table className="w-full min-w-[420px] text-xs">
+                    <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+                      <tr>{['Token', 'Holding', 'Value', 'Allocation', 'Last'].map((h) => <th key={h} className="px-2 py-1 font-medium">{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {real.map((h) => (
+                        <tr key={`${h.network}:${h.tokenAddress}`} className="border-t border-white/[0.04] tabular-nums">
+                          <td className="px-2 py-1.5">
+                            <span className="font-medium text-slate-200">{h.token}</span>
+                            <span className="text-slate-600"> · {h.network}</span>
+                            {!h.curated && <span className="ml-1 text-[9px] text-slate-600">(unpriced)</span>}
+                          </td>
+                          <td className="px-2 py-1.5 text-slate-300">{h.qty >= 1000 ? h.qty.toLocaleString('en-US', { maximumFractionDigits: 0 }) : h.qty.toPrecision(4)}</td>
+                          <td className="px-2 py-1.5 text-slate-200">{h.usd !== null ? fmtUsd(h.usd) : '—'}</td>
+                          <td className="px-2 py-1.5 text-slate-500">{h.usd !== null && totalUsd > 0 ? `${((h.usd / totalUsd) * 100).toFixed(1)}%` : '—'}</td>
+                          <td className="px-2 py-1.5 text-slate-500">
+                            <span className="mr-1 inline-block h-2 w-2 rounded-full align-middle" style={{ background: h.usd ? COLORS[priced.indexOf(h) % COLORS.length] : 'transparent' }} />
+                            {timeAgo(h.lastTs)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-1.5 text-[10px] text-slate-600">
+                  Holdings are netted from this wallet's tracked transfer history — an on-chain estimate, not a live balance call.
+                  {spamCount > 0 && <> {spamCount} likely airdrop/scam token{spamCount === 1 ? '' : 's'} hidden.</>}
+                </p>
+              </div>
+            )
+          })()}
+
           {s.tokens.length > 0 && (
-            <div className="overflow-hidden rounded-xl border border-white/[0.06]">
-              <table className="w-full text-xs">
+            <div className="overflow-x-auto rounded-xl border border-white/[0.08]">
+              <div className="px-3 pt-2 text-[10px] uppercase tracking-wider text-slate-500">Trading flow (curated tokens)</div>
+              <table className="w-full min-w-[440px] text-xs">
                 <thead className="bg-white/[0.02] text-left text-[10px] uppercase tracking-wider text-slate-500">
-                  <tr>{['Token', 'Net', 'Buys', 'Sells', 'Volume', 'Last', ''].map((h) => <th key={h} className="px-3 py-1.5 font-medium">{h}</th>)}</tr>
+                  <tr>{['Token', 'Net', 'Buys', 'Sells', 'Volume', 'Last'].map((h) => <th key={h} className="px-3 py-1.5 font-medium">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {s.tokens.map((t) => (
                     <tr key={`${t.network}:${t.token}`} className="border-t border-white/[0.04] tabular-nums">
                       <td className="px-3 py-1.5 font-medium text-slate-200">{t.token} <span className="text-slate-600">· {t.network}</span></td>
                       <td className={`px-3 py-1.5 ${pnlColor(t.netFlowUsd)}`}>{fmtSign(t.netFlowUsd)}</td>
-                      <td className="px-3 py-1.5 text-emerald-300/80">{t.buys}</td>
-                      <td className="px-3 py-1.5 text-rose-300/80">{t.sells}</td>
+                      <td className="px-3 py-1.5 text-emerald-300">{t.buys}</td>
+                      <td className="px-3 py-1.5 text-rose-300">{t.sells}</td>
                       <td className="px-3 py-1.5 text-slate-400">{fmtUsd(t.volumeUsd)}</td>
                       <td className="px-3 py-1.5 text-slate-500">{timeAgo(t.lastTs)}</td>
-                      <td className="px-3 py-1.5">
-                        <button className="btn-ghost !px-2 !py-0.5 text-[10px]" onClick={() => useStore.setState({ smartMoneyOpen: true })} title="Use the Copy button on the Activity tab for one-token manual copy">🐋</button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -148,8 +240,8 @@ export default function WalletAccount({ address, onClose }: { address: string; o
           </div>
           <div className="mt-2 flex gap-2">
             <button className="btn-ghost flex-1 !py-1.5 text-xs" onClick={() => stopFollow(existingFollow.id, false)}>⏸ Stop following</button>
-            <button className="btn-ghost flex-1 !py-1.5 text-xs text-amber-300" onClick={() => { if (confirm('Stop and sell all open mirror positions?')) stopFollow(existingFollow.id, true) }}>⏹ Stop & liquidate</button>
-            <button className="btn-ghost !py-1.5 text-xs text-rose-300" onClick={() => { if (confirm('Delete this follow and all its mirror bots?')) deleteFollow(existingFollow.id) }}>🗑</button>
+            <button className="btn-ghost flex-1 !py-1.5 text-xs text-amber-300" onClick={async () => { if (await confirm({ message: 'Stop and sell all open mirror positions?', confirmLabel: 'Stop & liquidate', tone: 'danger' })) stopFollow(existingFollow.id, true) }}>⏹ Stop & liquidate</button>
+            <button className="btn-ghost !py-1.5 text-xs text-rose-300" onClick={async () => { if (await confirm({ message: 'Delete this follow and all its mirror bots?', confirmLabel: 'Delete', tone: 'danger' })) deleteFollow(existingFollow.id) }}>🗑</button>
           </div>
         </div>
       ) : (
@@ -168,9 +260,9 @@ export default function WalletAccount({ address, onClose }: { address: string; o
               <select className="input !py-1.5 text-xs" value={sweepTo} onChange={(e) => setSweepTo(e.target.value as 'native' | 'usdt')}><option value="native">Native</option><option value="usdt">USDT</option></select>
             </label>
           </div>
-          <p className="mt-1.5 text-[11px] text-slate-500">Up to <strong className="text-slate-200">{maxConcurrent}</strong> concurrent mirrors of {fmtUsd(Number(perTrade) || 0)} each.</p>
+          <p className="mt-1.5 text-[11px] text-slate-500">Up to <strong className="text-slate-200">{maxConcurrent}</strong> concurrent mirrors of {fmtUsd(perTradeNum ?? 0)} each.</p>
           {err && <div className="mt-2 rounded-lg bg-rose-500/10 p-2 text-xs text-rose-300">{err}</div>}
-          <button className="btn-primary mt-2 w-full" disabled={busy || Number(budget) < 10} onClick={startFollow}>{busy ? 'Starting…' : `🤖 Auto-follow with ${fmtUsd(Number(budget) || 0)}`}</button>
+          <button className="btn-primary mt-2 w-full" disabled={busy || budgetNum === null || budgetNum < 10 || perTradeNum === null || perTradeNum < 10} onClick={startFollow}>{busy ? 'Starting…' : `🤖 Auto-follow with ${fmtUsd(budgetNum ?? 0)}`}</button>
         </div>
       )}
     </div>

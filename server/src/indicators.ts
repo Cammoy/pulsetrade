@@ -46,3 +46,26 @@ export function rsi(values: number[], period = 14): number {
   if (avgL === 0) return 100
   return 100 - 100 / (1 + avgG / avgL)
 }
+
+/** Stdev of the last `period` period-over-period returns, in % — a realized-volatility
+ *  proxy used to size positions inversely to volatility (risk-targeting). */
+export function stdevReturnsPct(values: number[], period: number): number {
+  if (values.length < period + 1) return NaN
+  const rets: number[] = []
+  for (let i = values.length - period; i < values.length; i++) {
+    const prev = values[i - 1]
+    if (prev > 0) rets.push((values[i] - prev) / prev)
+  }
+  if (rets.length < 2) return NaN
+  const mean = rets.reduce((s, x) => s + x, 0) / rets.length
+  const variance = rets.reduce((s, x) => s + (x - mean) ** 2, 0) / (rets.length - 1)
+  return Math.sqrt(variance) * 100
+}
+
+/** Return over the last `period` bars, in % (time-series momentum). NaN until warm. */
+export function trailingReturnPct(values: number[], period: number): number {
+  if (values.length < period + 1) return NaN
+  const past = values[values.length - 1 - period]
+  const now = values[values.length - 1]
+  return past > 0 ? ((now - past) / past) * 100 : NaN
+}

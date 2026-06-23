@@ -19,11 +19,12 @@ const addr = (c: string) => '0x' + c.repeat(40)
 const sineSeries = (n = 720, amp = 6) => Array.from({ length: n }, (_, i) => [NOW - (n - i) * HOUR, 100 + amp * Math.sin(i / 10)])
 
 const MARKETS = [
-  { id: 'bitcoin', symbol: 'btc', name: 'Bitcoin', price_change_percentage_24h: 2.0 },
-  { id: 'tether', symbol: 'usdt', name: 'Tether', price_change_percentage_24h: 0.01 }, // stable — excluded
-  { id: 'chainlink', symbol: 'link', name: 'Chainlink', price_change_percentage_24h: 9.5 }, // curated → launchable
-  { id: 'wrapped-bitcoin', symbol: 'wbtc', name: 'Wrapped Bitcoin', price_change_percentage_24h: 8.0 }, // wrapped — excluded
-  { id: 'some-moon-coin', symbol: 'moon', name: 'MoonCoin', price_change_percentage_24h: 25.0 }, // not curated → watch-only
+  { id: 'bitcoin', symbol: 'btc', name: 'Bitcoin', price_change_percentage_24h: 2.0, total_volume: 30_000_000_000, market_cap: 1_300_000_000_000 },
+  { id: 'tether', symbol: 'usdt', name: 'Tether', price_change_percentage_24h: 0.01, total_volume: 50_000_000_000, market_cap: 100_000_000_000 }, // stable — excluded
+  { id: 'chainlink', symbol: 'link', name: 'Chainlink', price_change_percentage_24h: 9.5, total_volume: 500_000_000, market_cap: 10_000_000_000 }, // curated → launchable
+  { id: 'wrapped-bitcoin', symbol: 'wbtc', name: 'Wrapped Bitcoin', price_change_percentage_24h: 8.0, total_volume: 200_000_000, market_cap: 12_000_000_000 }, // wrapped — excluded
+  { id: 'some-moon-coin', symbol: 'moon', name: 'MoonCoin', price_change_percentage_24h: 25.0, total_volume: 80_000_000, market_cap: 400_000_000 }, // not curated → watch-only
+  { id: 'dead-coin', symbol: 'dead', name: 'DeadCoin', price_change_percentage_24h: 40.0, total_volume: 50_000, market_cap: 30_000_000 }, // biggest "pump" but DEAD volume → must be excluded
 ]
 
 const cleanGp = {
@@ -69,8 +70,9 @@ test('top100 scope: ranks movers, excludes stables/wrapped, maps launchability',
   const tokens = new Set(out.rows.map((r: any) => r.token))
   assert.ok(!tokens.has('USDT'), 'stablecoin excluded')
   assert.ok(!tokens.has('WBTC'), 'wrapped excluded')
+  assert.ok(!tokens.has('DEAD'), 'the biggest 24h pump is EXCLUDED — dead volume, not recommendable')
   assert.ok(tokens.has('LINK') && tokens.has('MOON') && tokens.has('BTC'))
-  assert.equal(out.rows.length, 3 * STRATEGIES.length * Object.keys(RISK).length, 'all combos for the 3 eligible movers')
+  assert.equal(out.rows.length, 3 * STRATEGIES.length * Object.keys(RISK).length, 'all combos for the 3 LIQUID eligible movers')
   // sorted best-first
   for (let i = 1; i < out.rows.length; i++) assert.ok(out.rows[i - 1].profitUsd >= out.rows[i].profitUsd)
   // launch mapping
@@ -79,6 +81,24 @@ test('top100 scope: ranks movers, excludes stables/wrapped, maps launchability',
   const moon = out.rows.find((r: any) => r.token === 'MOON')
   assert.deepEqual(moon.launch, { kind: 'market', cg: 'some-moon-coin', token: 'MOON', tokenName: 'MoonCoin' }, 'non-curated coin is immediately tradable as a paper market bot')
   assert.equal(moon.change24hPct, 25)
+})
+
+test('P0-9 cohort median: every row of a coin carries its cohort median, and best ≥ typical', async () => {
+  const out: any = await profitFinder({ budgetUsd: 100, network: 'base', scope: 'top100' })
+  assert.ok(!('error' in out), out.error)
+  const linkRows = out.rows.filter((r: any) => r.token === 'LINK')
+  assert.equal(linkRows.length, STRATEGIES.length * Object.keys(RISK).length)
+  // every combo of the SAME coin shares one cohort median
+  const med = linkRows[0].cohortMedianReturnPct
+  for (const r of linkRows) assert.equal(r.cohortMedianReturnPct, med, 'all rows of a coin share its cohort median')
+  // and it is the actual median of that coin's per-combo OOS returns
+  const rets = linkRows.map((r: any) => r.returnPct).sort((a: number, b: number) => a - b)
+  const m = Math.floor(rets.length / 2)
+  const expected = +(rets.length % 2 ? rets[m] : (rets[m - 1] + rets[m]) / 2).toFixed(2)
+  assert.equal(med, expected)
+  // the headline (best of N) must be ≥ the typical (median) — the selection-bias point
+  assert.ok(Math.max(...rets) >= med, 'best-of-N headline ≥ the typical config')
+  assert.match(out.caveat, /typical|median/i, 'the caveat warns that the best is not the expected result')
 })
 
 test('trending scope: safety-gated pools backtested on their real pool candles, launchable as snipes', async () => {

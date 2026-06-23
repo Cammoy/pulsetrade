@@ -1,7 +1,6 @@
 import { useState } from 'react'
-import { useAccount, useBalance, useConnect, useDisconnect, type Connector } from 'wagmi'
-
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+import { useAccount, useBalance, useConnect, useDisconnect, type Connector } from '../wallet'
+import { shortAddr as short } from '../format'
 
 export default function WalletButton() {
   const { address, isConnected, chain } = useAccount()
@@ -22,7 +21,7 @@ export default function WalletButton() {
             {Number(bal.formatted).toFixed(4)} {bal.symbol}
           </span>
         )}
-        {chain && <span className="chip hidden bg-white/10 text-slate-300 sm:inline-flex">{chain.name}</span>}
+        {chain && <span className="chip hidden bg-[var(--surface-sunken)] text-slate-600 dark:bg-white/10 dark:text-slate-300 sm:inline-flex">{chain.name}</span>}
         <span className="hidden text-xs text-rose-300 group-hover:inline">×</span>
       </button>
     )
@@ -65,7 +64,7 @@ export default function WalletButton() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-50 mt-2 w-64 rounded-xl border border-white/10 bg-[#0d1320] p-2 shadow-xl">
+          <div className="absolute right-0 z-50 mt-2 w-64 rounded-xl border border-white/10 bg-[var(--menu)] p-2 shadow-xl">
             <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Choose a wallet</div>
             {options.map((c) => (
               <button
@@ -77,7 +76,7 @@ export default function WalletButton() {
                 {c.icon ? (
                   <img src={c.icon} alt="" className="h-5 w-5 rounded" />
                 ) : (
-                  <span className="flex h-5 w-5 items-center justify-center rounded bg-white/10 text-[10px]">{c.name[0]}</span>
+                  <span className="flex h-5 w-5 items-center justify-center rounded bg-[var(--surface-sunken)] text-[10px] dark:bg-white/10">{c.name[0]}</span>
                 )}
                 <span className="flex-1">{c.name}</span>
                 {pendingId === c.uid && <span className="text-[11px] text-slate-500">connecting…</span>}
