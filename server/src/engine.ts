@@ -827,6 +827,19 @@ async function settle(bot: Bot, a: Action | null, price: number): Promise<void> 
   }
 }
 
+/** Per-tick params for a copy bot. Copy trading MIRRORS the wallet: it exits when the wallet
+ *  sells — NOT at a tier take-profit, which would cap a whale's run at a few percent. So both the
+ *  stop-loss AND take-profit are OFF by default (Infinity ⇒ slTp / slTpFallback never fire) and
+ *  apply only when the user opts into one in the copy controls. perTradeUsd overrides entry size. */
+export function copyParams(base: RiskParams, copy: NonNullable<Bot['copy']>): RiskParams {
+  return {
+    ...base,
+    stopLossPct: copy.stopLossPct ?? Infinity,
+    takeProfitPct: copy.takeProfitPct ?? Infinity,
+    ...(copy.perTradeUsd != null && { perTradeUsd: copy.perTradeUsd }),
+  }
+}
+
 /** Candle-free protective exit: a catastrophic stop-loss / hard take-profit evaluated on
  *  the live SPOT price + cost basis alone. Runs when candle history is unavailable (a
  *  CoinGecko outage/rate-limit) so a held position's stop-loss is never silently suspended
@@ -856,17 +869,9 @@ async function tickBot(bot: Bot) {
   const strat = strategyById(bot.strategy)
   let params = RISK[bot.risk]
   if (!strat || !params) return
-  // Copy bots may carry per-bot overrides (set in the copy-trade setup): a fixed per-entry
-  // size + custom stop-loss / take-profit. Build a bot-scoped params so slTp + entry sizing
-  // pick them up without mutating the shared RISK preset. [copy-controls]
-  if (bot.copy && (bot.copy.perTradeUsd != null || bot.copy.stopLossPct != null || bot.copy.takeProfitPct != null)) {
-    params = {
-      ...params,
-      ...(bot.copy.perTradeUsd != null && { perTradeUsd: bot.copy.perTradeUsd }),
-      ...(bot.copy.stopLossPct != null && { stopLossPct: bot.copy.stopLossPct }),
-      ...(bot.copy.takeProfitPct != null && { takeProfitPct: bot.copy.takeProfitPct }),
-    }
-  }
+  // Copy bots MIRROR the wallet — so they use copy-scoped params (no tier take-profit cap; SL/TP
+  // are opt-in safety nets only). [copy-mirror]
+  if (bot.copy) params = copyParams(params, bot.copy)
 
   const price = priceForBot(bot)
   if (!price) {

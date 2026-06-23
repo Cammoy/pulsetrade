@@ -295,7 +295,7 @@ const copytrade: Strategy = {
   name: 'Copy Trade',
   tagline: 'Follow smart money',
   description:
-    'Mirrors a tracked wallet: when that wallet buys this token, the bot buys; when it sells, the bot sells its position. Sized to the bot budget and risk tier.',
+    'Mirrors a tracked wallet: when that wallet buys this token, the bot buys; when it sells, the bot exits — so you ride their full move rather than capping it at a tier take-profit. Stop-loss and take-profit are optional safety nets you can add per copy.',
   decide(ctx) {
     const guard = slTp(ctx)
     if (guard) return guard

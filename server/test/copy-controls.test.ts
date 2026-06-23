@@ -12,7 +12,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-copyctl
 process.env.ETHERSCAN_API_KEY = 'test-key'
 
 const { state } = await import('../src/store.js')
-const { createCopyBot, startFollow, followScan } = await import('../src/engine.js')
+const { createCopyBot, startFollow, followScan, copyParams } = await import('../src/engine.js')
 const { getSpotPrices } = await import('../src/prices.js')
 const { tokenOf } = await import('../src/networks.js')
 
@@ -30,6 +30,26 @@ test('copytrade: a perTradeUsd override sets the exact entry size (capped to cas
   assert.equal(a.usd, 150) // the fixed override, NOT 22% of the $1000 budget
   const a2 = s.decide(ctx({ state: { copySignal: { side: 'buy', txHash: '0xb' } }, params: { ...RISK.balanced, perTradeUsd: 150 }, cashUsd: 80 }))
   assert.ok(a2 && a2.type === 'buy' && a2.usd === 80, 'never deploys more than available cash')
+})
+
+// ── copyParams: mirror by default (no tier take-profit cap) ──────────────────
+test('copyParams: a plain copy bot has NO stop-loss / take-profit — it rides with the wallet', () => {
+  const s = strategyById('copytrade')!
+  const p = copyParams(RISK.balanced, { walletAddress: '0x', walletLabel: 'W' })
+  assert.equal(p.stopLossPct, Infinity)
+  assert.equal(p.takeProfitPct, Infinity)
+  const held = { qty: 1, avgCostUsd: 100, costUsd: 100 }
+  // +50% would have tripped the tier's +4.5% take-profit — now it holds (mirrors the wallet).
+  assert.equal(s.decide(ctx({ params: p, position: held, price: 150 })), null)
+  // −50% would have tripped the tier's −5% stop — also holds (exit comes from the wallet's sell).
+  assert.equal(s.decide(ctx({ params: p, position: held, price: 50 })), null)
+})
+
+test('copyParams: opt-in stop-loss / take-profit + per-trade override are applied', () => {
+  const p = copyParams(RISK.balanced, { walletAddress: '0x', walletLabel: 'W', stopLossPct: 12, takeProfitPct: 40, perTradeUsd: 75 })
+  assert.equal(p.stopLossPct, 12)
+  assert.equal(p.takeProfitPct, 40)
+  assert.equal(p.perTradeUsd, 75)
 })
 
 // ── Strategy: custom stop-loss / take-profit ─────────────────────────────────
