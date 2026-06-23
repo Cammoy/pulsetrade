@@ -444,12 +444,16 @@ function CopySetup({ wallet, onClose, onLaunched }: { wallet: SetupTarget; onClo
   const tpN = tp.trim() ? Number(tp) : null
   const maxConcurrent = Math.max(1, Math.min(10, Math.floor((budgetN || 0) / (perN || 1)) || 1))
   const evmOk = /^0x[a-fA-F0-9]{40}$/.test(address.trim())
-  // Copy = mirror: the exit is the wallet's sell. A stop-loss / take-profit is an opt-in safety net,
-  // NOT a tier default — so we never claim a +4.5% cap the bot won't actually apply.
-  const safety =
-    (slN && slN > 0) || (tpN && tpN > 0)
-      ? ` Safety net: also exits on ${[slN && slN > 0 ? `a −${slN}% stop-loss` : '', tpN && tpN > 0 ? `a +${tpN}% take-profit` : ''].filter(Boolean).join(' or ')}.`
-      : ' No stop-loss or take-profit — you ride their full move (add one in Advanced for a safety net).'
+  // Copy = mirror: the exit is the wallet's sell. SL/TP is an opt-in safety net, not a tier default
+  // (so we never claim a cap the bot won't apply). EXCEPT live copies get a catastrophic stop by
+  // default — keep in sync with the server's LIVE_COPY_STOP_PCT.
+  const LIVE_COPY_STOP = 40
+  const effectiveStop = slN && slN > 0 ? slN : mode === 'live' ? LIVE_COPY_STOP : null
+  const stopLabel = slN && slN > 0 ? `a −${slN}% stop-loss` : effectiveStop ? `a −${effectiveStop}% catastrophic stop (live safety)` : ''
+  const exitParts = [stopLabel, tpN && tpN > 0 ? `a +${tpN}% take-profit` : ''].filter(Boolean)
+  const safety = exitParts.length
+    ? ` Safety net: also exits on ${exitParts.join(' or ')}.`
+    : ' No stop-loss or take-profit — you ride their full move (add one in Advanced for a safety net).'
 
   // Mirror the server bounds so the preview/button reflect what will actually be accepted.
   const valid =

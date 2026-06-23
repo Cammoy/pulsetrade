@@ -80,6 +80,14 @@ export async function iconProxy(req: Request, res: Response): Promise<void> {
       res.status(415).end()
       return
     }
+    // Reject an oversized icon by its declared length BEFORE buffering it into memory (an icon is
+    // never megabytes — this caps the per-request allocation, not just the cache).
+    const declared = Number(r.headers.get('content-length'))
+    if (Number.isFinite(declared) && declared > MAX_ICON_BYTES) {
+      if (hit) return serve(res, hit)
+      res.status(413).end()
+      return
+    }
     const buf = Buffer.from(await r.arrayBuffer())
     const c: Cached = { buf, type, at: Date.now(), etag: r.headers.get('etag') ?? undefined, lastModified: r.headers.get('last-modified') ?? undefined }
     if (buf.length <= MAX_ICON_BYTES) store(url, c) // cache normal-sized icons only
@@ -94,4 +102,9 @@ export async function iconProxy(req: Request, res: Response): Promise<void> {
 export function __resetIconCache(): void {
   cache.clear()
   bytes = 0
+}
+
+/** Test-only: age every cached entry past its TTL so the next request revalidates. */
+export function __expireIcons(): void {
+  for (const c of cache.values()) c.at = 0
 }

@@ -827,14 +827,20 @@ async function settle(bot: Bot, a: Action | null, price: number): Promise<void> 
   }
 }
 
-/** Per-tick params for a copy bot. Copy trading MIRRORS the wallet: it exits when the wallet
- *  sells — NOT at a tier take-profit, which would cap a whale's run at a few percent. So both the
- *  stop-loss AND take-profit are OFF by default (Infinity ⇒ slTp / slTpFallback never fire) and
- *  apply only when the user opts into one in the copy controls. perTradeUsd overrides entry size. */
-export function copyParams(base: RiskParams, copy: NonNullable<Bot['copy']>): RiskParams {
+// A LIVE copy bot's only exit is the whale's on-chain sell, which we detect on a ~60s-cached
+// signal + 20s tick — a real lag during a rug. So live copies get a WIDE catastrophic stop-loss by
+// default: wide enough not to clip a normal whale swing, tight enough to bound a -100% event. Paper
+// copies stay pure mirror. The take-profit always stays off (mirroring the upside is the point).
+export const LIVE_COPY_STOP_PCT = 40
+
+/** Per-tick params for a copy bot. Copy trading MIRRORS the wallet: it exits when the wallet sells
+ *  — NOT at a tier take-profit, which would cap a whale's run. Take-profit is off unless the user
+ *  opts in; stop-loss is off for PAPER (pure mirror) but defaults to a catastrophic backstop for
+ *  LIVE money (overridable). perTradeUsd overrides entry size. */
+export function copyParams(base: RiskParams, copy: NonNullable<Bot['copy']>, mode: Bot['mode'] = 'paper'): RiskParams {
   return {
     ...base,
-    stopLossPct: copy.stopLossPct ?? Infinity,
+    stopLossPct: copy.stopLossPct ?? (mode === 'live' ? LIVE_COPY_STOP_PCT : Infinity),
     takeProfitPct: copy.takeProfitPct ?? Infinity,
     ...(copy.perTradeUsd != null && { perTradeUsd: copy.perTradeUsd }),
   }
@@ -871,7 +877,7 @@ async function tickBot(bot: Bot) {
   if (!strat || !params) return
   // Copy bots MIRROR the wallet — so they use copy-scoped params (no tier take-profit cap; SL/TP
   // are opt-in safety nets only). [copy-mirror]
-  if (bot.copy) params = copyParams(params, bot.copy)
+  if (bot.copy) params = copyParams(params, bot.copy, bot.mode)
 
   const price = priceForBot(bot)
   if (!price) {
