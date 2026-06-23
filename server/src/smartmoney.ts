@@ -585,6 +585,7 @@ export interface WalletTokenStat {
   volumeUsd: number
   netFlowUsd: number // buys − sells (USD value, where priced)
   lastTs: number
+  priced: boolean // false ⇒ no USD value available (unlisted token) → volume/net are unknown, not 0
 }
 
 export interface WalletStats {
@@ -621,7 +622,7 @@ export function computeWalletStats(events: SmartMoneyEvent[]): WalletStats {
     volume += usd
     series.push({ t: e.ts, v: +net.toFixed(2) })
     const key = `${e.network}:${e.token}`
-    const t = byTok.get(key) ?? { network: e.network, token: e.token, buys: 0, sells: 0, volumeUsd: 0, netFlowUsd: 0, lastTs: 0 }
+    const t = byTok.get(key) ?? { network: e.network, token: e.token, buys: 0, sells: 0, volumeUsd: 0, netFlowUsd: 0, lastTs: 0, priced: false }
     if (e.side === 'buy') {
       t.buys++
       t.netFlowUsd += usd
@@ -630,6 +631,7 @@ export function computeWalletStats(events: SmartMoneyEvent[]): WalletStats {
       t.netFlowUsd -= usd
     }
     t.volumeUsd += usd
+    if (e.usd != null) t.priced = true // we had a real USD value for at least one trade of this token
     t.lastTs = Math.max(t.lastTs, e.ts)
     byTok.set(key, t)
   }

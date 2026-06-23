@@ -226,7 +226,7 @@ cd web && npx vitest run                              # 74 web tests
 
 Copy `server/.env.example` → `server/.env`. Everything is optional in paper mode. Key groups:
 
-- **Market data** — `COINGECKO_API_KEY` (recommended; eases rate-limit backoff)
+- **Market data** — `COINGECKO_API_KEY` (recommended; eases rate-limit backoff **and powers Copy Trading's realized-P&L scoring + trader discovery** — without it those fall back to net-flow)
 - **Live EVM** — `ZEROX_API_KEY`, `BOT_WALLET_KEY` *or* `TURNKEY_*`
 - **Live Solana** — `SOLANA_WALLET_KEY` *or* Turnkey Solana
 - **Auth** — `ENGINE_TOKEN` (+ `VITE_ENGINE_TOKEN` for the web)
