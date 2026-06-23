@@ -56,7 +56,7 @@ const STABLE_SYMBOLS = new Set([
  *  majors (WETH, WBTC, stETH, …) and stablecoins. A whale holding WETH or parking in USDC
  *  is noise, not a play — these are excluded from the consensus / accumulation signals
  *  (the raw activity feed still shows them). [accum-filter] */
-const isSignalToken = (symbol: string): boolean => {
+export const isSignalToken = (symbol: string): boolean => {
   const s = symbol.toUpperCase()
   return !KNOWN_MAJOR_SYMBOLS.has(s) && !STABLE_SYMBOLS.has(s)
 }

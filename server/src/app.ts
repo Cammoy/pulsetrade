@@ -22,6 +22,7 @@ import { solanaLiveReady, solanaWalletAddress, solanaSigner, jupiterQuote, splTo
 import { screenToken, screenAddress } from './screen-fetch.js'
 import { discoverSafePools } from './sniper.js'
 import { listWallets, addWallet, removeWallet, smartMoneyFeed, walletProfile, trackingReady, tokensForCopyTrade, gatherConsensusHoldings, smartMoneyLeaderboard } from './smartmoney.js'
+import { getDiscovered } from './discover.js'
 import { EVM_ADDR, CG_ID, isKnownAddress } from './validators.js'
 import { smartMoneyIntelligence } from './smart-insights.js'
 import { aiReady } from './ai-trader.js'
@@ -453,6 +454,9 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
   app.get('/api/smart-money/leaderboard', ah(async (_req, res) => {
     res.json(await smartMoneyLeaderboard())
   }))
+
+  // Discover copy-worthy traders we don't track yet (background crawl) — before /:network.
+  app.get('/api/smart-money/discover', (_req, res) => res.json(getDiscovered()))
 
   app.get('/api/smart-money/:network', ah(async (req, res) => {
     res.json(await smartMoneyFeed(req.params.network))
