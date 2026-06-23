@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useStore, jpost } from '../store'
 import type { SmartMoneyEvent, TrackedWallet } from '../types'
-import { fmtUsd, timeAgo, parseAmount } from '../format'
+import { fmtUsd, timeAgo, parseAmount, shortAddr as short } from '../format'
 import WalletAccount from './WalletAccount'
 import SmartInsights from './SmartInsights'
 import ConsensusHoldings from './ConsensusHoldings'
 import NetworkSelect from './NetworkSelect'
 
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 /**
  * Smart Money — a top-level view (a tab beside Bots & Market). Surfaces what

@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useStore, jpost } from '../store'
 import type { WalletProfile } from '../types'
-import { fmtUsd, fmtSign, pnlColor, timeAgo, parseAmount } from '../format'
+import { fmtUsd, fmtSign, pnlColor, timeAgo, parseAmount, shortAddr as short } from '../format'
 import { useModal } from '../useModal'
 import Sparkline from './Sparkline'
 
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 /**
  * Per-wallet smart-money account view: net-flow chart, per-token flows, recent
