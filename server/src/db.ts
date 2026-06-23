@@ -12,6 +12,7 @@ import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Trade } from './store.js'
+import { DUST_PNL } from './pnl.js'
 
 // node:sqlite is a built-in on Node ≥22.5. createRequire loads it SYNCHRONOUSLY
 // (so recordTrade can stay sync in the tick loop) and throws on older Node → null.
@@ -176,8 +177,8 @@ export function tradeStats(q: TradeQuery = {}): TradeStats {
       COALESCE(SUM(pnlUsd),0) pnl,
       COALESCE(SUM(usd),0) vol,
       COALESCE(SUM(feeUsd),0) fees,
-      COALESCE(SUM(CASE WHEN side='sell' AND pnlUsd>0 THEN 1 ELSE 0 END),0) wins,
-      COALESCE(SUM(CASE WHEN side='sell' AND pnlUsd<0 THEN 1 ELSE 0 END),0) losses,
+      COALESCE(SUM(CASE WHEN side='sell' AND pnlUsd>${DUST_PNL} THEN 1 ELSE 0 END),0) wins,
+      COALESCE(SUM(CASE WHEN side='sell' AND pnlUsd<${-DUST_PNL} THEN 1 ELSE 0 END),0) losses,
       MIN(ts) firstTs, MAX(ts) lastTs
     FROM trades ${sql}`).get<{ c: number; pnl: number; vol: number; fees: number; wins: number; losses: number; firstTs: number | null; lastTs: number | null }>(...params)
     ?? { c: 0, pnl: 0, vol: 0, fees: 0, wins: 0, losses: 0, firstTs: null, lastTs: null } // a single-row aggregate is never undefined, but satisfy the optional

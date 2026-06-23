@@ -8,6 +8,7 @@ import { RISK, type RiskParams } from './risk.js'
 import { networkById, NETWORKS } from './networks.js'
 import { discoverSafePools } from './sniper.js'
 import { SLIPPAGE_PER_SIDE as SLIPPAGE } from './costs.js'
+import { isWin, isLoss } from './pnl.js'
 
 /** Honest edge statistics — these MEASURE whether a strategy's profit is distinguishable
  *  from luck; they do NOT create edge. Most retail strategies land at no-edge/inconclusive,
@@ -194,8 +195,10 @@ export function simulate(
       if (qty < 1e-12) { qty = 0; costUsd = 0 }
       fees += fee
       trades++
-      if (pnl >= 0) wins++
-      else losses++
+      // Same win/loss definition as the live engine (./pnl.js) so the backtest win-rate is
+      // comparable to the live bot's — a break-even/dust round trip is neither. [P2-15]
+      if (isWin(pnl)) wins++
+      else if (isLoss(pnl)) losses++
       if (a.exit || qty === 0) state.lastExitAt = candles[i].t
     }
     const v = cash + qty * price + swept // total equity = trading balance + open position + swept profit
