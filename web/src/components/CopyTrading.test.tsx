@@ -67,6 +67,9 @@ describe('CopyTrading', () => {
     expect(document.body).toHaveTextContent(/Auto-follow all buys/i)
     // Mirror-by-default: the preview must NOT claim a take-profit the bot won't apply.
     expect(document.body).toHaveTextContent(/ride their full move/i)
+    // …and it must reflect the actual computed sizes (default $100/mirror from a $300 pool).
+    expect(document.body).toHaveTextContent(/\$100\.00/)
+    expect(document.body).toHaveTextContent(/\$300\.00/)
   })
 
   test('clicking a wallet opens the analysis (WalletAccount) view', async () => {
@@ -82,7 +85,10 @@ describe('CopyTrading', () => {
     render(<CopyTrading />)
     await waitFor(() => screen.getByText('GCR'))
     fireEvent.click(screen.getByTitle('Analyse this wallet'))
-    await waitFor(() => expect(screen.queryByText('🏆 Copy-worthiness leaderboard')).not.toBeInTheDocument())
+    // The leaderboard is replaced by the WalletAccount analysis — assert it actually RENDERED
+    // (its back affordance + the wallet header), not merely that the leaderboard vanished.
+    await waitFor(() => expect(document.body).toHaveTextContent(/back to accounts/i))
+    expect(screen.queryByText('🏆 Copy-worthiness leaderboard')).not.toBeInTheDocument()
   })
 
   test('a missing Etherscan key surfaces the setup banner', async () => {

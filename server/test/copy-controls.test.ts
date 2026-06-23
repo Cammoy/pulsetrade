@@ -12,7 +12,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-copyctl
 process.env.ETHERSCAN_API_KEY = 'test-key'
 
 const { state } = await import('../src/store.js')
-const { createCopyBot, startFollow, followScan, copyParams } = await import('../src/engine.js')
+const { createCopyBot, startFollow, followScan, copyParams, LIVE_COPY_STOP_PCT } = await import('../src/engine.js')
 const { getSpotPrices } = await import('../src/prices.js')
 const { tokenOf } = await import('../src/networks.js')
 
@@ -43,6 +43,15 @@ test('copyParams: a plain copy bot has NO stop-loss / take-profit — it rides w
   assert.equal(s.decide(ctx({ params: p, position: held, price: 150 })), null)
   // −50% would have tripped the tier's −5% stop — also holds (exit comes from the wallet's sell).
   assert.equal(s.decide(ctx({ params: p, position: held, price: 50 })), null)
+})
+
+test('copyParams: a LIVE copy gets a catastrophic stop by default; paper stays pure mirror', () => {
+  const live = copyParams(RISK.balanced, { walletAddress: '0x', walletLabel: 'W' }, 'live')
+  assert.equal(live.stopLossPct, LIVE_COPY_STOP_PCT) // live money is never left fully unprotected
+  assert.equal(live.takeProfitPct, Infinity) // …but the upside is still never capped
+  assert.equal(copyParams(RISK.balanced, { walletAddress: '0x', walletLabel: 'W' }, 'paper').stopLossPct, Infinity)
+  // an explicit override always wins, even on live
+  assert.equal(copyParams(RISK.balanced, { walletAddress: '0x', walletLabel: 'W', stopLossPct: 12 }, 'live').stopLossPct, 12)
 })
 
 test('copyParams: opt-in stop-loss / take-profit + per-trade override are applied', () => {

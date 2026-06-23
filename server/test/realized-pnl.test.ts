@@ -46,6 +46,22 @@ test('realizedFromLots: an orphan sell (no observed prior buy) is excluded', () 
   assert.equal(r.matchedSells, 1)
 })
 
+test('realizedFromLots: a sell exceeding held qty realises only the backed portion', () => {
+  const r = realizedFromLots([{ side: 'buy', qty: 10, px: 1, ts: 1 }, { side: 'sell', qty: 15, px: 3, ts: 2 }])
+  assert.equal(r.realizedUsd, 20) // only the 10 held realise (10 × (3−1)); the 5 unbacked are dropped
+  assert.equal(r.matchedSells, 1)
+})
+
+test('realizedFromLots: cost basis resets across a full exit and re-entry', () => {
+  const r = realizedFromLots([
+    { side: 'buy', qty: 10, px: 1, ts: 1 }, { side: 'sell', qty: 10, px: 3, ts: 2 }, // +20
+    { side: 'buy', qty: 5, px: 2, ts: 3 }, { side: 'sell', qty: 5, px: 4, ts: 4 }, // +10 (new basis $2, not blended with the closed lot)
+  ])
+  assert.equal(r.realizedUsd, 30)
+  assert.equal(r.matchedSells, 2)
+  assert.equal(r.wins, 2)
+})
+
 // ── computeRealizedPnl (historical fetch mocked) ─────────────────────────────
 const evt = (token: string, side: 'buy' | 'sell', qty: number, ts: number, curated = true) =>
   ({ wallet: '0x', label: 'W', network: 'base', token, tokenAddress: '0x', side, qty, usd: null, ts, txHash: `0x${token}${side}${ts}`, curated })

@@ -1,0 +1,27 @@
+name: CI
+
+# Enforces the green bar a money-handling app needs on every push/PR. Pins the Node version from
+# .nvmrc (≥22.5 for node:sqlite + tsx — the default Node 18 false-fails the whole suite), then
+# typechecks, runs the full server + web test suites, and proves the production build compiles.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (server)
+        run: npx tsc --noEmit
+        working-directory: server
+      - name: Test (server + web)
+        run: npm test
+      - name: Production build (web tsc + vite)
+        run: npm run build
