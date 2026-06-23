@@ -2,13 +2,17 @@
 // CoinGecko & CoinMarketCap resolve by contract on supported chains; DexScreener
 // and the block explorer work universally (best for brand-new tokens).
 
+import { explorerTokenUrl } from './explorer'
+
+// Maps key by the SERVER network id (BNB Chain = 'bnb') → each provider's own slug. These
+// were keyed 'bsc' before, so every BNB research link silently failed to render.
 const CG_PLATFORM: Record<string, string> = {
   ethereum: 'ethereum',
   base: 'base',
   arbitrum: 'arbitrum-one',
   optimism: 'optimistic-ethereum',
   polygon: 'polygon-pos',
-  bsc: 'binance-smart-chain',
+  bnb: 'binance-smart-chain',
 }
 const CMC_CHAIN: Record<string, string> = {
   ethereum: 'ethereum',
@@ -16,7 +20,7 @@ const CMC_CHAIN: Record<string, string> = {
   arbitrum: 'arbitrum',
   optimism: 'optimism',
   polygon: 'polygon',
-  bsc: 'bnb',
+  bnb: 'bnb',
 }
 const DEX_CHAIN: Record<string, string> = {
   ethereum: 'ethereum',
@@ -24,15 +28,7 @@ const DEX_CHAIN: Record<string, string> = {
   arbitrum: 'arbitrum',
   optimism: 'optimism',
   polygon: 'polygon',
-  bsc: 'bsc',
-}
-const EXPLORER: Record<string, string> = {
-  ethereum: 'https://etherscan.io/token/',
-  base: 'https://basescan.org/token/',
-  arbitrum: 'https://arbiscan.io/token/',
-  optimism: 'https://optimistic.etherscan.io/token/',
-  polygon: 'https://polygonscan.com/token/',
-  bsc: 'https://bscscan.com/token/',
+  bnb: 'bsc', // DexScreener's own slug for BNB Chain is 'bsc'
 }
 
 export interface CoinLink {
@@ -47,6 +43,7 @@ export function coinLinks(network: string, address: string): CoinLink[] {
   if (CG_PLATFORM[network]) links.push({ label: 'CoinGecko', icon: '🦎', url: `https://www.coingecko.com/en/coins/${CG_PLATFORM[network]}/contract/${a}` })
   if (CMC_CHAIN[network]) links.push({ label: 'CoinMarketCap', icon: '📈', url: `https://coinmarketcap.com/dexscan/${CMC_CHAIN[network]}/${a}/` })
   if (DEX_CHAIN[network]) links.push({ label: 'DexScreener', icon: '📊', url: `https://dexscreener.com/${DEX_CHAIN[network]}/${a}` })
-  if (EXPLORER[network]) links.push({ label: 'Explorer', icon: '🔍', url: `${EXPLORER[network]}${a}` })
+  const ex = explorerTokenUrl(network, a)
+  if (ex) links.push({ label: 'Explorer', icon: '🔍', url: ex })
   return links
 }
