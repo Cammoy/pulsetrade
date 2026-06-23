@@ -11,6 +11,7 @@
 import { state, save, type TrackedWallet } from './store.js'
 import { networkById, tokenOf, NETWORKS } from './networks.js'
 import { spot, getSpotPrices, tokenLiquidityUsd } from './prices.js'
+import { ttlCache } from './ttl-cache.js'
 
 export const trackingReady = () => Boolean(process.env.ETHERSCAN_API_KEY)
 
@@ -212,25 +213,24 @@ interface RawTransfer {
   hash: string
 }
 
-const txCache = new Map<string, { at: number; rows: RawTransfer[] }>()
 const TX_TTL = 60_000
+const txCache = ttlCache<RawTransfer[]>(TX_TTL)
 
 async function fetchTransfers(chainId: number, wallet: string): Promise<RawTransfer[] | null> {
   if (!trackingReady()) return null
   const key = `${chainId}:${wallet.toLowerCase()}`
-  const hit = txCache.get(key)
-  if (hit && Date.now() - hit.at < TX_TTL) return hit.rows
+  const fresh = txCache.fresh(key)
+  if (fresh) return fresh
   // Pull a deep window so holdings (netted from history) are reasonably complete.
   const url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=account&action=tokentx&address=${wallet}&page=1&offset=1000&sort=desc&apikey=${process.env.ETHERSCAN_API_KEY}`
   try {
     const res = await fetch(url)
-    if (!res.ok) return hit?.rows ?? null
+    if (!res.ok) return txCache.stale(key) ?? null
     const data: any = await res.json()
     const rows: RawTransfer[] = Array.isArray(data?.result) ? data.result : []
-    txCache.set(key, { at: Date.now(), rows })
-    return rows
+    return txCache.set(key, rows)
   } catch {
-    return hit?.rows ?? null
+    return txCache.stale(key) ?? null
   }
 }
 
@@ -526,7 +526,7 @@ export function latestSellForToken(events: SmartMoneyEvent[], token: string): Sm
 
 // ── Public feed + per-bot signal ─────────────────────────────────────────────
 
-const feedCache = new Map<string, { at: number; events: SmartMoneyEvent[] }>()
+const feedCache = ttlCache<SmartMoneyEvent[]>(TX_TTL)
 
 /** Recent smart-money activity + the consensus signal across tracked wallets. */
 export async function smartMoneyFeed(network: string): Promise<{ events: SmartMoneyEvent[]; consensus: ConsensusRow[]; needsKey: boolean; unsupported?: boolean }> {
@@ -535,8 +535,8 @@ export async function smartMoneyFeed(network: string): Promise<{ events: SmartMo
   if (!net) return { events: [], consensus: [], needsKey: !trackingReady() }
   if (!net.evm) return { events: [], consensus: [], needsKey: false, unsupported: true } // Etherscan is EVM-only
   if (!trackingReady()) return { events: [], consensus: [], needsKey: true }
-  const hit = feedCache.get(network)
-  if (hit && Date.now() - hit.at < TX_TTL) return { events: hit.events, consensus: smartMoneyConsensus(hit.events), needsKey: false }
+  const fresh = feedCache.fresh(network)
+  if (fresh) return { events: fresh, consensus: smartMoneyConsensus(fresh), needsKey: false }
 
   const all: SmartMoneyEvent[] = []
   for (const w of state.wallets) {
@@ -545,7 +545,7 @@ export async function smartMoneyFeed(network: string): Promise<{ events: SmartMo
   }
   all.sort((a, b) => b.ts - a.ts)
   const events = all.slice(0, 100)
-  feedCache.set(network, { at: Date.now(), events })
+  feedCache.set(network, events)
   return { events, consensus: smartMoneyConsensus(events), needsKey: false }
 }
 
