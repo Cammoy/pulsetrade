@@ -85,7 +85,7 @@ export function isDeadToken(opts: { lastTs?: number; liquidityUsd: number | null
  *  concurrency + a 30-min cache keep the GeckoTerminal budget sane; unknown/unreadable
  *  liquidity is KEPT (never a false drop). Order-preserving. Works for any row carrying a
  *  network + tokenAddress (per-wallet holdings AND consensus rows). [liquidity-filter] */
-async function dropRuggedTokens<T extends { network: string; tokenAddress: string }>(items: T[], now: number): Promise<T[]> {
+export async function dropRuggedTokens<T extends { network: string; tokenAddress: string }>(items: T[], now: number = Date.now()): Promise<T[]> {
   const dead = new Set<string>()
   let i = 0
   const worker = async () => {

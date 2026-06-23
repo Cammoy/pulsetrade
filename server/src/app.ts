@@ -47,6 +47,16 @@ export function tokenOk(provided: string | undefined, engineToken: string | unde
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
+/** Should a WebSocket upgrade be allowed? Open when no token is configured (dev); otherwise
+ *  the request must carry the matching `?token=`. Pure (URL + token in) so it's unit-testable
+ *  independently of the live server. The WS feed leaks positions/fills/wallets, so this is the
+ *  same fail-closed boundary as the HTTP mutating routes. [P2-3] */
+export function wsAuthOk(reqUrl: string | undefined, engineToken: string | undefined): boolean {
+  if (!engineToken) return true
+  const tok = new URL(reqUrl ?? '', 'http://localhost').searchParams.get('token') ?? undefined
+  return tokenOk(tok, engineToken)
+}
+
 // ── Pure boot guards (no process.exit / no I/O — testable in isolation) ───────
 
 /** SAFE BOOT: a persisted LIVE mode must NOT auto-resume on a restart unless the
