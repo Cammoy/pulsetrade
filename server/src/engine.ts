@@ -854,8 +854,19 @@ async function tickBot(bot: Bot) {
   if (scheduled && bot.position.qty === 0) return
 
   const strat = strategyById(bot.strategy)
-  const params = RISK[bot.risk]
+  let params = RISK[bot.risk]
   if (!strat || !params) return
+  // Copy bots may carry per-bot overrides (set in the copy-trade setup): a fixed per-entry
+  // size + custom stop-loss / take-profit. Build a bot-scoped params so slTp + entry sizing
+  // pick them up without mutating the shared RISK preset. [copy-controls]
+  if (bot.copy && (bot.copy.perTradeUsd != null || bot.copy.stopLossPct != null || bot.copy.takeProfitPct != null)) {
+    params = {
+      ...params,
+      ...(bot.copy.perTradeUsd != null && { perTradeUsd: bot.copy.perTradeUsd }),
+      ...(bot.copy.stopLossPct != null && { stopLossPct: bot.copy.stopLossPct }),
+      ...(bot.copy.takeProfitPct != null && { takeProfitPct: bot.copy.takeProfitPct }),
+    }
+  }
 
   const price = priceForBot(bot)
   if (!price) {
@@ -1285,7 +1296,10 @@ export function createBot(input: {
   // market bots (no real gas) are exempt. [P2-7]
   if (!isMarket && net.avgGasUsd > 0) {
     const roundTripGas = 2.5 * net.avgGasUsd
-    const perTrade = input.strategy === 'dca' ? budget / (RISK[input.risk].dcaSlices ?? 1) : (budget * RISK[input.risk].positionPct) / 100
+    const perTrade =
+      input.strategy === 'dca' ? budget / (RISK[input.risk].dcaSlices ?? 1)
+      : input.copy?.perTradeUsd != null ? input.copy.perTradeUsd // copy bot with a fixed per-entry size
+      : (budget * RISK[input.risk].positionPct) / 100
     if (perTrade < 20 * roundTripGas)
       return { error: `Each trade (~$${perTrade.toFixed(2)}) is too small to beat ~$${roundTripGas.toFixed(2)} round-trip gas on ${net.name} — raise the budget so trades clear ~$${(20 * roundTripGas).toFixed(0)}.` }
   }
@@ -1715,6 +1729,8 @@ export async function followScan(now = Date.now()): Promise<void> {
         sweepTo: f.sweepTo,
         followId: f.id,
         seedBuyTx: e.txHash, // enter the very buy that triggered the spawn [follow-entry]
+        stopLossPct: f.stopLossPct, // propagate the follow's exit overrides to each mirror
+        takeProfitPct: f.takeProfitPct,
       })
       if (!('error' in out)) {
         f.poolUsd -= f.perTradeUsd
@@ -1734,6 +1750,8 @@ export function startFollow(input: {
   maxConcurrent?: number
   risk?: Follow['risk']
   sweepTo?: Bot['sweepTo']
+  stopLossPct?: number
+  takeProfitPct?: number
 }): Follow | { error: string } {
   if (!EVM_ADDR.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
   const a = input.walletAddress.toLowerCase()
@@ -1743,6 +1761,8 @@ export function startFollow(input: {
   const per = Number(input.perTradeUsd)
   if (!Number.isFinite(total) || total < 10) return { error: 'budget must be at least $10' }
   if (!Number.isFinite(per) || per < 10 || per > total) return { error: 'per-trade must be ≥ $10 and ≤ the total budget' }
+  const controls = parseCopyControls({ stopLossPct: input.stopLossPct, takeProfitPct: input.takeProfitPct }, per)
+  if ('error' in controls) return { error: controls.error }
   const risk = input.risk && RISK[input.risk] ? input.risk : 'balanced'
   const f: Follow = {
     id: uid(),
@@ -1754,6 +1774,8 @@ export function startFollow(input: {
     maxConcurrent: Math.max(1, Math.min(10, Math.floor(input.maxConcurrent ?? Math.floor(total / per)))),
     risk,
     sweepTo: input.sweepTo === 'usdt' ? 'usdt' : undefined,
+    stopLossPct: controls.copy.stopLossPct,
+    takeProfitPct: controls.copy.takeProfitPct,
     enabled: true,
     startedAt: Date.now(),
     lastScanAt: 0,
@@ -1802,6 +1824,32 @@ export const serializeFollow = (f: Follow) => ({ ...f, seenTx: undefined, stats:
 
 // ── Copy-trade & AI bots ─────────────────────────────────────────────────────
 
+/** Validate the optional copy-trade controls, returning only the supplied overrides (so unset
+ *  fields fall back to the risk tier). `budgetUsd` bounds the per-entry size. */
+function parseCopyControls(
+  input: { perTradeUsd?: number; stopLossPct?: number; takeProfitPct?: number },
+  budgetUsd: number,
+): { copy: { perTradeUsd?: number; stopLossPct?: number; takeProfitPct?: number } } | { error: string } {
+  const copy: { perTradeUsd?: number; stopLossPct?: number; takeProfitPct?: number } = {}
+  if (input.perTradeUsd != null) {
+    const v = Number(input.perTradeUsd)
+    if (!Number.isFinite(v) || v <= 0) return { error: 'per-trade size must be a positive number' }
+    if (v > budgetUsd) return { error: 'per-trade size cannot exceed the budget' }
+    copy.perTradeUsd = +v.toFixed(2)
+  }
+  if (input.stopLossPct != null) {
+    const v = Number(input.stopLossPct)
+    if (!Number.isFinite(v) || v <= 0 || v > 90) return { error: 'stop-loss must be between 0 and 90%' }
+    copy.stopLossPct = +v.toFixed(2)
+  }
+  if (input.takeProfitPct != null) {
+    const v = Number(input.takeProfitPct)
+    if (!Number.isFinite(v) || v <= 0 || v > 1000) return { error: 'take-profit must be between 0 and 1000%' }
+    copy.takeProfitPct = +v.toFixed(2)
+  }
+  return { copy }
+}
+
 export function createCopyBot(input: {
   network: string
   token: string
@@ -1812,13 +1860,18 @@ export function createCopyBot(input: {
   sweepTo?: Bot['sweepTo']
   followId?: string
   seedBuyTx?: string // the wallet BUY that triggered an auto-follow spawn — enter it directly
+  perTradeUsd?: number // copy control: fixed USD per copied entry (else risk-tier %)
+  stopLossPct?: number // copy control: override the risk tier's stop-loss
+  takeProfitPct?: number // copy control: override the risk tier's take-profit
 }): Bot | { error: string } {
   if (!EVM_ADDR.test(input.walletAddress ?? '')) return { error: 'invalid wallet address' }
   if (!networkById(input.network)?.evm) return { error: 'copy trading needs an EVM network (wallet tracking is Etherscan-based)' }
+  const controls = parseCopyControls(input, Number(input.budgetUsd))
+  if ('error' in controls) return { error: controls.error }
   const out = createBot({
     network: input.network, token: input.token, strategy: 'copytrade', risk: input.risk, budgetUsd: input.budgetUsd,
     name: `🐋 Copy ${input.walletLabel} · ${input.token}`,
-    copy: { walletAddress: input.walletAddress, walletLabel: input.walletLabel },
+    copy: { walletAddress: input.walletAddress, walletLabel: input.walletLabel, ...controls.copy },
     sweepTo: input.sweepTo,
     followId: input.followId,
   })

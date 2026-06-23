@@ -305,7 +305,9 @@ const copytrade: Strategy = {
     ctx.state.lastCopiedTx = sig.txHash
     if (sig.side === 'buy') {
       if (ctx.position.qty > 0) return null
-      const usd = Math.min((ctx.budgetUsd * ctx.params.positionPct) / 100, ctx.cashUsd)
+      // Per-entry size: a fixed override (copy control) if set, else the risk tier's %.
+      const sizeUsd = ctx.params.perTradeUsd && ctx.params.perTradeUsd > 0 ? ctx.params.perTradeUsd : (ctx.budgetUsd * ctx.params.positionPct) / 100
+      const usd = Math.min(sizeUsd, ctx.cashUsd)
       if (usd > 1) return { type: 'buy', usd, reason: 'Smart money bought — copying entry' }
     } else if (ctx.position.qty > 0) {
       return { type: 'sell', fraction: 1, reason: 'Smart money sold — copying exit', exit: true }

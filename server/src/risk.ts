@@ -15,6 +15,9 @@ export interface RiskParams {
   dcaIntervalMin: number
   dcaSlices: number
   cooldownMin: number // wait after an exit before re-entering
+  /** Copy-trade only: a fixed per-entry USD size that overrides positionPct. Injected per
+   *  copy bot by the engine from bot.copy.perTradeUsd; never set on the shared RISK presets. */
+  perTradeUsd?: number
 }
 
 export const RISK: Record<string, RiskParams> = {
