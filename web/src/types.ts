@@ -283,9 +283,29 @@ export interface Follow {
   maxConcurrent: number
   risk: string
   sweepTo?: 'native' | 'usdt'
+  stopLossPct?: number
+  takeProfitPct?: number
   enabled: boolean
   startedAt: number
   stats: { active: number; completed: number; realizedUsd: number; sweptUsd: number; wins: number; losses: number }
+}
+
+/** One wallet's copy-worthiness ranking row (GET /api/smart-money/leaderboard). */
+export interface LeaderboardRow {
+  address: string
+  label: string
+  category?: string
+  note?: string
+  score: number
+  tier: 'proven' | 'promising' | 'unproven' | 'thin'
+  realizedFlowUsd: number
+  roundTrips: number
+  recencyDays: number | null
+  trades: number
+  netFlowUsd: number
+  lastTs: number | null
+  series: number[]
+  topTokens: { network: string; token: string }[]
 }
 
 export interface TournamentStanding {
@@ -329,9 +349,10 @@ export interface Bot {
   schedule: { enabled: boolean; days: number[]; startHour: number; endHour: number }
   pool?: { poolAddress: string; tokenAddress: string; decimals: number }
   sniper?: { takeProfitPct: number; stopLossPct: number; maxHoldMin: number; trailingPct?: number }
-  copy?: { walletAddress: string; walletLabel: string }
+  copy?: { walletAddress: string; walletLabel: string; perTradeUsd?: number; stopLossPct?: number; takeProfitPct?: number }
   ai?: boolean
   tournamentId?: string
+  followId?: string // set ⇒ this bot was spawned by an auto-follow pool
   cg?: string
   sweepTo?: 'native' | 'usdt'
   archived?: boolean

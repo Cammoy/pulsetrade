@@ -21,6 +21,7 @@ import Wizard from './components/Wizard'
 import BotDetail from './components/BotDetail'
 import ErrorBoundary from './components/ErrorBoundary'
 import SmartMoney from './components/SmartMoney'
+import CopyTrading from './components/CopyTrading'
 import AiBot from './components/AiBot'
 import MarketPanel from './components/MarketPanel'
 import Portfolio from './components/Portfolio'
@@ -135,6 +136,8 @@ function Main() {
               <MarketPanel />
             ) : view === 'smart' ? (
               <SmartMoney />
+            ) : view === 'copy' ? (
+              <CopyTrading />
             ) : view === 'docs' ? (
               <Docs />
             ) : (

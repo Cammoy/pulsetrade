@@ -29,8 +29,8 @@ export default function BottomNav() {
     useShallow((s) => ({ view: s.view, setView: s.setView, openWizard: s.openWizard, openMore: s.openMore, moreOpen: s.moreOpen })),
   )
 
-  // Smart Money lives in the More sheet now, so "More" reads active on that view too.
-  const activeKey = moreOpen ? 'more' : view === 'smart' ? 'more' : view
+  // Smart Money + Copy Trading live in the More sheet, so "More" reads active on those views too.
+  const activeKey = moreOpen ? 'more' : view === 'smart' || view === 'copy' ? 'more' : view
   // A tab: the icon sits in a rounded "squircle" that fills with the accent when active,
   // with a matching tinted label below (inactive = muted).
   const Tab = ({ id, label, onClick }: { id: string; label: string; onClick: () => void }) => {
@@ -84,26 +84,26 @@ export default function BottomNav() {
 }
 
 function MoreSheet() {
-  const { openMore, setView, smartActive } = useStore(
-    useShallow((s) => ({ openMore: s.openMore, setView: s.setView, smartActive: s.view === 'smart' })),
+  const { openMore, setView, smartActive, copyActive } = useStore(
+    useShallow((s) => ({ openMore: s.openMore, setView: s.setView, smartActive: s.view === 'smart', copyActive: s.view === 'copy' })),
   )
   useModal(() => openMore(false))
   const run = (action: ToolAction) => () => {
     openMore(false)
     ;(useStore.getState()[action] as (o: boolean) => void)(true)
   }
-  const goSmart = () => {
+  const go = (v: 'smart' | 'copy') => () => {
     openMore(false)
-    setView('smart')
+    setView(v)
   }
   return (
     <div className="animate-backdrop fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm lg:hidden" onClick={() => openMore(false)}>
       <div className="animate-sheet pb-safe w-full max-w-md rounded-t-3xl border-t border-white/10 bg-[var(--menu)] p-4" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/20" />
 
-        {/* Smart Money — promoted to the top of the sheet (a primary insight view). */}
+        {/* Smart Money + Copy Trading — promoted to the top of the sheet (primary views). */}
         <button
-          onClick={goSmart}
+          onClick={go('smart')}
           className={`mb-2 flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors ${
             smartActive ? 'border-indigo-400/40 bg-indigo-500/[0.12]' : 'border-white/10 bg-white/[0.04] active:bg-white/[0.08]'
           }`}
@@ -112,6 +112,19 @@ function MoreSheet() {
           <span className="min-w-0">
             <span className="block text-sm font-semibold text-slate-100">Smart Money</span>
             <span className="block truncate text-[11px] text-slate-500">Whale flows, notable moves & emerging coins</span>
+          </span>
+          <span className="ml-auto text-slate-500">›</span>
+        </button>
+        <button
+          onClick={go('copy')}
+          className={`mb-2 flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors ${
+            copyActive ? 'border-indigo-400/40 bg-indigo-500/[0.12]' : 'border-white/10 bg-white/[0.04] active:bg-white/[0.08]'
+          }`}
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.06] text-xl">🔁</span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-100">Copy Trading</span>
+            <span className="block truncate text-[11px] text-slate-500">Rank copy-worthy wallets & mirror their trades</span>
           </span>
           <span className="ml-auto text-slate-500">›</span>
         </button>
