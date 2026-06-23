@@ -7,7 +7,7 @@
 import { networkById, tokenOf } from './networks.js'
 import {
   trackingReady, listWallets, walletEvents, computeWalletStats, computeWalletScore, computeRealizedPnl,
-  isSignalToken, tokensForCopyTrade, type WalletScore,
+  isSignalToken, tokensForCopyTrade, etherscanChainLimited, markEtherscanChainLimited, type WalletScore,
 } from './smartmoney.js'
 
 const EVM_ADDR = /^0x[a-fA-F0-9]{40}$/
@@ -43,6 +43,7 @@ async function recentTokenTraders(chainId: number, tokenAddr: string): Promise<s
     const res = await fetch(url, { signal: AbortSignal.timeout(12_000) })
     if (!res.ok) return []
     const data: any = await res.json()
+    if (typeof data?.result === 'string' && /not supported for this chain/i.test(data.result)) markEtherscanChainLimited()
     const rows: any[] = Array.isArray(data?.result) ? data.result : []
     const token = tokenAddr.toLowerCase()
     const freq = new Map<string, number>()
@@ -129,8 +130,10 @@ async function runDiscovery(): Promise<void> {
 
 /** Return the cached discovered traders; kick off a background refresh when stale (fire-and-forget,
  *  so the HTTP request returns instantly — the crawl can take a minute). */
-export function getDiscovered(now = Date.now()): { traders: DiscoveredTrader[]; discovering: boolean; updatedAt: number | null } {
+export function getDiscovered(now = Date.now()): { traders: DiscoveredTrader[]; discovering: boolean; updatedAt: number | null; coverageLimited: boolean } {
   const fresh = cache && now - cache.at < DISCOVER_TTL
   if (!fresh && !running && trackingReady()) void runDiscovery()
-  return { traders: cache?.traders ?? [], discovering: running, updatedAt: cache?.at ?? null }
+  // coverageLimited ⇒ the crawl's L2 sourcing was blocked by a mainnet-only (free) Etherscan plan,
+  // so an empty result means "no chain access", not "no traders found".
+  return { traders: cache?.traders ?? [], discovering: running, updatedAt: cache?.at ?? null, coverageLimited: etherscanChainLimited() }
 }

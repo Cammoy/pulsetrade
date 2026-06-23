@@ -20,7 +20,7 @@ const row = (over: Partial<LeaderboardRow>): LeaderboardRow => ({
 })
 
 const json = (b: unknown) => new Response(JSON.stringify(b), { headers: { 'content-type': 'application/json' } })
-const board = (rows: LeaderboardRow[], needsKey = false, discover?: { traders: DiscoveredTrader[]; discovering: boolean }) => {
+const board = (rows: LeaderboardRow[], needsKey = false, discover?: { traders: DiscoveredTrader[]; discovering: boolean; coverageLimited?: boolean }) => {
   globalThis.fetch = vi.fn(async (url: unknown) =>
     String(url).includes('/discover')
       ? json(discover ?? { traders: [], discovering: false })
@@ -120,5 +120,12 @@ describe('CopyTrading', () => {
     board([], false, { traders: [], discovering: true })
     render(<CopyTrading />)
     await waitFor(() => expect(document.body).toHaveTextContent(/Scanning/i))
+  })
+
+  test('Discover explains a mainnet-only Etherscan key instead of failing silently', async () => {
+    board([], false, { traders: [], discovering: false, coverageLimited: true })
+    render(<CopyTrading />)
+    await waitFor(() => expect(document.body).toHaveTextContent(/multichain Etherscan/i))
+    expect(document.body).toHaveTextContent(/L2/)
   })
 })

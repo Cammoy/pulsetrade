@@ -216,6 +216,14 @@ interface RawTransfer {
 const TX_TTL = 60_000
 const txCache = ttlCache<RawTransfer[]>(TX_TTL)
 
+// Etherscan V2's FREE tier is Ethereum-mainnet-only — L2 token-transfer queries (Base, Arbitrum,
+// …) return a "not supported for this chain" NOTOK. We track that so the UI can say "L2 tracking +
+// discovery need a paid Etherscan plan" instead of silently showing empty L2 data / no traders.
+let etherscanChainBlocked = false
+export const etherscanChainLimited = (): boolean => etherscanChainBlocked
+export const markEtherscanChainLimited = (): void => { etherscanChainBlocked = true }
+const chainUnsupported = (result: unknown): boolean => typeof result === 'string' && /not supported for this chain/i.test(result)
+
 async function fetchTransfers(chainId: number, wallet: string): Promise<RawTransfer[] | null> {
   if (!trackingReady()) return null
   const key = `${chainId}:${wallet.toLowerCase()}`
@@ -227,6 +235,7 @@ async function fetchTransfers(chainId: number, wallet: string): Promise<RawTrans
     const res = await fetch(url)
     if (!res.ok) return txCache.stale(key) ?? null
     const data: any = await res.json()
+    if (chainUnsupported(data?.result)) markEtherscanChainLimited() // free tier → this L2 is dark
     const rows: RawTransfer[] = Array.isArray(data?.result) ? data.result : []
     return txCache.set(key, rows)
   } catch {

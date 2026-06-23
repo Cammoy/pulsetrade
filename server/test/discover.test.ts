@@ -10,6 +10,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-discove
 process.env.ETHERSCAN_API_KEY = 'test-key'
 
 const { discoverTopTraders } = await import('../src/discover.js')
+const { etherscanChainLimited } = await import('../src/smartmoney.js')
 const { tokenOf } = await import('../src/networks.js')
 
 const NOW = Date.now()
@@ -65,6 +66,21 @@ before(() => {
     if (u.includes('market_chart')) return json({ prices: [[NOW - 30 * D, 1], [NOW - 15 * D, 2], [NOW, 3]] })
     return json({})
   }) as typeof fetch
+})
+
+test('discoverTopTraders flags coverage when a mainnet-only (free) Etherscan key rejects an L2', async () => {
+  const saved = globalThis.fetch
+  globalThis.fetch = (async (url: any) =>
+    String(url).includes('etherscan')
+      ? json({ status: '0', message: 'NOTOK', result: 'Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage.' })
+      : json({})) as typeof fetch
+  try {
+    const out = await discoverTopTraders()
+    assert.equal(out.length, 0) // no candidates can be sourced
+    assert.equal(etherscanChainLimited(), true) // …but we KNOW why, so the UI won't claim "no traders"
+  } finally {
+    globalThis.fetch = saved
+  }
 })
 
 test('discoverTopTraders surfaces a verified profitable round-tripper and filters buy-only noise', async () => {

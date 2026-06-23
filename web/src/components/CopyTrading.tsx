@@ -56,7 +56,7 @@ export default function CopyTrading() {
   const [loading, setLoading] = useState(true)
   const [setup, setSetup] = useState<{ open: boolean; wallet: SetupTarget }>({ open: false, wallet: null })
   const [detail, setDetail] = useState<string | null>(null)
-  const [disc, setDisc] = useState<{ traders: DiscoveredTrader[]; discovering: boolean }>({ traders: [], discovering: false })
+  const [disc, setDisc] = useState<{ traders: DiscoveredTrader[]; discovering: boolean; coverageLimited: boolean }>({ traders: [], discovering: false, coverageLimited: false })
 
   const loadBoard = async () => {
     setLoading(true)
@@ -75,7 +75,7 @@ export default function CopyTrading() {
     try {
       const r = await fetch('/api/smart-money/discover')
       const d = await r.json()
-      setDisc({ traders: d.traders ?? [], discovering: !!d.discovering })
+      setDisc({ traders: d.traders ?? [], discovering: !!d.discovering, coverageLimited: !!d.coverageLimited })
     } catch {
       /* offline */
     }
@@ -118,7 +118,7 @@ export default function CopyTrading() {
 
       <ActiveCopies follows={follows} standalone={standalone} all={copyBots} mode={mode} notify={notify} refresh={refresh} control={control} remove={remove} onSelect={setDetail} />
 
-      <Discover traders={disc.traders} discovering={disc.discovering} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
+      <Discover traders={disc.traders} discovering={disc.discovering} coverageLimited={disc.coverageLimited} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
 
       <Leaderboard rows={rows} loading={loading} caveat={caveat} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
 
@@ -328,7 +328,7 @@ function Leaderboard({ rows, loading, caveat, onCopy, onSelect }: { rows: Leader
 }
 
 // ── Discover (verified external traders) ─────────────────────────────────────
-function Discover({ traders, discovering, onCopy, onSelect }: { traders: DiscoveredTrader[]; discovering: boolean; onCopy: (w: { address: string; label: string }) => void; onSelect: (address: string) => void }) {
+function Discover({ traders, discovering, coverageLimited, onCopy, onSelect }: { traders: DiscoveredTrader[]; discovering: boolean; coverageLimited: boolean; onCopy: (w: { address: string; label: string }) => void; onSelect: (address: string) => void }) {
   return (
     <Card
       title="🔭 Discover traders"
@@ -336,10 +336,12 @@ function Discover({ traders, discovering, onCopy, onSelect }: { traders: Discove
       right={discovering ? <Spinner label="Scanning pools…" /> : undefined}
     >
       {traders.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-slate-500">
+        <div className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm leading-relaxed text-slate-500">
           {discovering
             ? 'Scanning curated pools for profitable traders — this runs in the background, results appear here in a minute.'
-            : 'No verified external traders in the latest scan. The crawl refreshes periodically.'}
+            : coverageLimited
+              ? 'Discovery needs multichain Etherscan coverage — the current key is Ethereum-mainnet only (the free tier), and copyable tokens live on L2s. Upgrade the Etherscan plan to discover (and copy) L2 traders.'
+              : 'No verified external traders in the latest scan. The crawl refreshes periodically.'}
         </div>
       ) : (
         <div className="space-y-2">
