@@ -15,8 +15,8 @@ const META = {
 } as unknown as Meta
 
 const row = (over: Partial<LeaderboardRow>): LeaderboardRow => ({
-  address: '0x' + 'a'.repeat(40), label: 'GCR', score: 80, tier: 'proven', realizedFlowUsd: 5000,
-  roundTrips: 6, recencyDays: 2, trades: 30, netFlowUsd: 1000, lastTs: 1, series: [1, 2, 3], topTokens: [], ...over,
+  address: '0x' + 'a'.repeat(40), label: 'GCR', score: 80, tier: 'proven', basis: 'realized-pnl', realizedFlowUsd: 5000,
+  realizedPnlUsd: 4200, roundTrips: 6, recencyDays: 2, trades: 30, netFlowUsd: 1000, lastTs: 1, series: [1, 2, 3], topTokens: [], ...over,
 })
 
 const board = (rows: LeaderboardRow[], needsKey = false) => {
@@ -35,6 +35,8 @@ describe('CopyTrading', () => {
     await waitFor(() => expect(screen.getByText('GCR')).toBeInTheDocument())
     expect(screen.getByText('Tetra')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Copy' }).length).toBe(2)
+    expect(document.body).toHaveTextContent(/realized P&L/i) // cost-basis basis, not net flow
+
   })
 
   test('empty workspace shows the no-active-copies state', async () => {

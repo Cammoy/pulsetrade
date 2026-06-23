@@ -224,10 +224,21 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
   </div>
 )
 
+const Spinner = ({ label }: { label: string }) => (
+  <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-indigo-400" />
+    {label}
+  </span>
+)
+
 // ── Leaderboard ──────────────────────────────────────────────────────────────
 function Leaderboard({ rows, loading, caveat, onCopy }: { rows: LeaderboardRow[]; loading: boolean; caveat: string; onCopy: (w: { address: string; label: string }) => void }) {
   return (
-    <Card title="🏆 Copy-worthiness leaderboard" sub="Tracked wallets ranked by a flow-based score — a research starting point, not a guarantee">
+    <Card
+      title="🏆 Copy-worthiness leaderboard"
+      sub="Tracked wallets ranked by realized P&L (cost-basis) — a research starting point, not a guarantee"
+      right={loading ? <Spinner label={rows.length ? 'Refreshing…' : 'Scoring wallets…'} /> : undefined}
+    >
       {loading && rows.length === 0 ? (
         <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-white/[0.03]" />)}</div>
       ) : rows.length === 0 ? (
@@ -236,6 +247,7 @@ function Leaderboard({ rows, loading, caveat, onCopy }: { rows: LeaderboardRow[]
         <div className="space-y-2">
           {rows.map((r, i) => {
             const tier = TIER[r.tier]
+            const profit = r.realizedPnlUsd ?? r.realizedFlowUsd
             return (
               <div key={r.address} className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5 transition-colors hover:bg-white/[0.04]">
                 <span className="w-5 shrink-0 text-center text-sm font-bold tabular-nums text-slate-500">{i + 1}</span>
@@ -255,8 +267,8 @@ function Leaderboard({ rows, loading, caveat, onCopy }: { rows: LeaderboardRow[]
                   </div>
                 </div>
                 <div className="hidden shrink-0 text-right sm:block">
-                  <div className={`text-xs font-semibold tabular-nums ${pnlColor(r.realizedFlowUsd)}`}>{fmtCompactUsd(r.realizedFlowUsd, { signed: true })}</div>
-                  <div className="text-[10px] text-slate-500">realized flow</div>
+                  <div className={`text-xs font-semibold tabular-nums ${pnlColor(profit)}`}>{fmtCompactUsd(profit, { signed: true })}</div>
+                  <div className="text-[10px] text-slate-500">{r.basis === 'realized-pnl' ? 'realized P&L' : 'net flow'}</div>
                 </div>
                 {r.series.length >= 2 && (
                   <div className="hidden shrink-0 md:block">

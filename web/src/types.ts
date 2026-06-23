@@ -255,7 +255,9 @@ export interface WalletStats {
 export interface WalletScore {
   score: number
   tier: 'proven' | 'promising' | 'unproven' | 'thin'
+  basis: 'realized-pnl' | 'flow'
   realizedFlowUsd: number
+  realizedPnlUsd: number | null
   roundTrips: number
   recencyDays: number | null
   caveat: string
@@ -298,7 +300,9 @@ export interface LeaderboardRow {
   note?: string
   score: number
   tier: 'proven' | 'promising' | 'unproven' | 'thin'
+  basis: 'realized-pnl' | 'flow'
   realizedFlowUsd: number
+  realizedPnlUsd: number | null
   roundTrips: number
   recencyDays: number | null
   trades: number
