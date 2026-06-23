@@ -8,6 +8,7 @@ import { RISK, type RiskParams } from './risk.js'
 import { networkById, NETWORKS } from './networks.js'
 import { discoverSafePools } from './sniper.js'
 import { SLIPPAGE_PER_SIDE as SLIPPAGE } from './costs.js'
+import { isWin, isLoss } from './pnl.js'
 
 /** Honest edge statistics — these MEASURE whether a strategy's profit is distinguishable
  *  from luck; they do NOT create edge. Most retail strategies land at no-edge/inconclusive,
@@ -194,8 +195,10 @@ export function simulate(
       if (qty < 1e-12) { qty = 0; costUsd = 0 }
       fees += fee
       trades++
-      if (pnl >= 0) wins++
-      else losses++
+      // Same win/loss definition as the live engine (./pnl.js) so the backtest win-rate is
+      // comparable to the live bot's — a break-even/dust round trip is neither. [P2-15]
+      if (isWin(pnl)) wins++
+      else if (isLoss(pnl)) losses++
       if (a.exit || qty === 0) state.lastExitAt = candles[i].t
     }
     const v = cash + qty * price + swept // total equity = trading balance + open position + swept profit
@@ -307,6 +310,42 @@ function stampCohortMedian(cohort: FinderRow[]): FinderRow[] {
   return cohort
 }
 
+/** Per-coin metadata that's constant across its strategy×risk combos. */
+type CohortMeta = Pick<FinderRow, 'network' | 'token' | 'tokenName' | 'launch'> & { change24hPct?: number | null }
+
+/** Backtest one coin under EVERY strategy × risk tier and return the stamped cohort. The single
+ *  place a FinderRow is built — the three finder scopes (curated / top-100 / trending) all call
+ *  this with their own per-coin meta + gas + window, so their row shape can never drift. */
+function buildCohort(candles: { t: number; c: number }[], budget: number, gasUsd: number, meta: CohortMeta, days?: number): FinderRow[] {
+  const cohort: FinderRow[] = []
+  for (const s of STRATEGIES) {
+    for (const risk of Object.keys(RISK)) {
+      const r = simulate(candles, { strategy: s.id, risk, budgetUsd: budget, gasUsd, days })
+      if (r.error) continue
+      cohort.push({
+        network: meta.network,
+        token: meta.token,
+        tokenName: meta.tokenName,
+        strategy: s.id,
+        strategyName: s.name,
+        risk,
+        returnPct: r.oosReturnPct,
+        inSampleReturnPct: r.returnPct,
+        cohortMedianReturnPct: 0,
+        profitUsd: +((budget * r.oosReturnPct) / 100).toFixed(2),
+        winRate: r.wins + r.losses > 0 ? +((r.wins / (r.wins + r.losses)) * 100).toFixed(0) : null,
+        maxDrawdownPct: r.maxDrawdownPct,
+        trades: r.trades,
+        feesUsd: r.feesUsd,
+        edge: { verdict: r.edge.verdict, tStat: r.edge.tStat, sharpe: r.edge.sharpe, expectancyPct: r.edge.expectancyPct },
+        change24hPct: meta.change24hPct,
+        launch: meta.launch,
+      })
+    }
+  }
+  return stampCohortMedian(cohort)
+}
+
 /**
  * "Here is $X — where would it have made the most?" Backtests every
  * strategy × risk tier for the chosen coin(s) over the same real history
@@ -338,32 +377,12 @@ export async function profitFinder(opts: {
       skipped.push(tok.symbol)
       continue
     }
-    const cohort: FinderRow[] = []
-    for (const s of STRATEGIES) {
-      for (const risk of Object.keys(RISK)) {
-        const r = simulate(candles, { strategy: s.id, risk, budgetUsd: budget, gasUsd: net.avgGasUsd })
-        if (r.error) continue
-        cohort.push({
-          network: net.id,
-          token: tok.symbol,
-          tokenName: tok.name,
-          strategy: s.id,
-          strategyName: s.name,
-          risk,
-          returnPct: r.oosReturnPct,
-          inSampleReturnPct: r.returnPct,
-          cohortMedianReturnPct: 0,
-          profitUsd: +((budget * r.oosReturnPct) / 100).toFixed(2),
-          winRate: r.wins + r.losses > 0 ? +((r.wins / (r.wins + r.losses)) * 100).toFixed(0) : null,
-          maxDrawdownPct: r.maxDrawdownPct,
-          trades: r.trades,
-          feesUsd: r.feesUsd,
-          edge: { verdict: r.edge.verdict, tStat: r.edge.tStat, sharpe: r.edge.sharpe, expectancyPct: r.edge.expectancyPct },
-          launch: { kind: 'bot', network: net.id, token: tok.symbol },
-        })
-      }
-    }
-    rows.push(...stampCohortMedian(cohort))
+    rows.push(...buildCohort(candles, budget, net.avgGasUsd, {
+      network: net.id,
+      token: tok.symbol,
+      tokenName: tok.name,
+      launch: { kind: 'bot', network: net.id, token: tok.symbol },
+    }))
   }
   rows.sort((a, b) => b.profitUsd - a.profitUsd)
   return { budgetUsd: budget, days: 30, rows, skipped, caveat: WALK_FORWARD_NOTE }
@@ -444,35 +463,15 @@ async function top100Finder(budget: number): Promise<FinderResult | { error: str
       continue
     }
     const home = curatedHome(m.id)
-    const cohort: FinderRow[] = []
-    for (const s of STRATEGIES) {
-      for (const risk of Object.keys(RISK)) {
-        const r = simulate(candles, { strategy: s.id, risk, budgetUsd: budget, gasUsd: home ? networkById(home.network)!.avgGasUsd : 0.02 })
-        if (r.error) continue
-        cohort.push({
-          network: home?.network ?? 'market',
-          token: symbol,
-          tokenName: m.name ?? symbol,
-          strategy: s.id,
-          strategyName: s.name,
-          risk,
-          returnPct: r.oosReturnPct,
-          inSampleReturnPct: r.returnPct,
-          cohortMedianReturnPct: 0,
-          profitUsd: +((budget * r.oosReturnPct) / 100).toFixed(2),
-          winRate: r.wins + r.losses > 0 ? +((r.wins / (r.wins + r.losses)) * 100).toFixed(0) : null,
-          maxDrawdownPct: r.maxDrawdownPct,
-          trades: r.trades,
-          feesUsd: r.feesUsd,
-          edge: { verdict: r.edge.verdict, tStat: r.edge.tStat, sharpe: r.edge.sharpe, expectancyPct: r.edge.expectancyPct },
-          change24hPct: m.price_change_percentage_24h != null ? +Number(m.price_change_percentage_24h).toFixed(2) : null,
-          // Curated coins launch on their home network (live-capable); the rest
-          // launch as paper "market" bots priced straight from CoinGecko.
-          launch: home ? { kind: 'bot', ...home } : { kind: 'market', cg: m.id, token: symbol, tokenName: m.name ?? symbol },
-        })
-      }
-    }
-    rows.push(...stampCohortMedian(cohort))
+    rows.push(...buildCohort(candles, budget, home ? networkById(home.network)!.avgGasUsd : 0.02, {
+      network: home?.network ?? 'market',
+      token: symbol,
+      tokenName: m.name ?? symbol,
+      change24hPct: m.price_change_percentage_24h != null ? +Number(m.price_change_percentage_24h).toFixed(2) : null,
+      // Curated coins launch on their home network (live-capable); the rest launch as paper
+      // "market" bots priced straight from CoinGecko.
+      launch: home ? { kind: 'bot', ...home } : { kind: 'market', cg: m.id, token: symbol, tokenName: m.name ?? symbol },
+    }))
   }
   if (!rows.length && skipped.length)
     return { error: 'market data provider is rate-limiting — try again in a minute' }
@@ -516,33 +515,13 @@ async function trendingFinder(budget: number, network: string): Promise<FinderRe
       continue
     }
     const days = Math.max(1, Math.round((candles[candles.length - 1].t - candles[0].t) / 86_400_000))
-    const cohort: FinderRow[] = []
-    for (const s of STRATEGIES) {
-      for (const risk of Object.keys(RISK)) {
-        const r = simulate(candles, { strategy: s.id, risk, budgetUsd: budget, gasUsd: net.avgGasUsd, days })
-        if (r.error) continue
-        cohort.push({
-          network: net.id,
-          token: p.tokenSymbol,
-          tokenName: p.tokenName,
-          strategy: s.id,
-          strategyName: s.name,
-          risk,
-          returnPct: r.oosReturnPct,
-          inSampleReturnPct: r.returnPct,
-          cohortMedianReturnPct: 0,
-          profitUsd: +((budget * r.oosReturnPct) / 100).toFixed(2),
-          winRate: r.wins + r.losses > 0 ? +((r.wins / (r.wins + r.losses)) * 100).toFixed(0) : null,
-          maxDrawdownPct: r.maxDrawdownPct,
-          trades: r.trades,
-          feesUsd: r.feesUsd,
-          edge: { verdict: r.edge.verdict, tStat: r.edge.tStat, sharpe: r.edge.sharpe, expectancyPct: r.edge.expectancyPct },
-          change24hPct: p.priceChange1hPct ?? null,
-          launch: { kind: 'snipe', network: net.id, token: p.tokenSymbol, poolAddress: p.poolAddress, tokenAddress: p.tokenAddress },
-        })
-      }
-    }
-    rows.push(...stampCohortMedian(cohort))
+    rows.push(...buildCohort(candles, budget, net.avgGasUsd, {
+      network: net.id,
+      token: p.tokenSymbol,
+      tokenName: p.tokenName,
+      change24hPct: p.priceChange1hPct ?? null,
+      launch: { kind: 'snipe', network: net.id, token: p.tokenSymbol, poolAddress: p.poolAddress, tokenAddress: p.tokenAddress },
+    }, days))
   }
   rows.sort((a, b) => b.profitUsd - a.profitUsd)
   return { budgetUsd: budget, days: 30, rows, skipped, caveat: `${SURVIVORSHIP_NOTE} ${WALK_FORWARD_NOTE}` }

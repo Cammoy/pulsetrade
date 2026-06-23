@@ -11,7 +11,7 @@ import { initTradeDb, backfillTrades } from './db.js'
 import { startEngine, stopEngine, disarmLiveBotsForBoot, reconcilePendingBuys } from './engine.js'
 import { liveReady } from './live.js'
 import { solanaLiveReady } from './live-solana.js'
-import { createApp, shouldDowngradeLiveOnBoot, liveArmedButNoToken, invalidCapEnv, tokenOk } from './app.js'
+import { createApp, shouldDowngradeLiveOnBoot, liveArmedButNoToken, invalidCapEnv, wsAuthOk } from './app.js'
 import { notifyAsync, notify } from './health.js'
 
 // Load server/.env (ETHERSCAN_API_KEY, GEMINI_API_KEY, live keys, ENGINE_TOKEN)
@@ -46,12 +46,7 @@ const server = createServer(app)
 const wss = new WebSocketServer({
   server,
   path: '/ws',
-  verifyClient: ENGINE_TOKEN
-    ? (info, cb) => {
-        const tok = new URL(info.req.url ?? '', 'http://localhost').searchParams.get('token') ?? undefined
-        cb(tokenOk(tok, ENGINE_TOKEN))
-      }
-    : undefined,
+  verifyClient: ENGINE_TOKEN ? (info, cb) => cb(wsAuthOk(info.req.url, ENGINE_TOKEN)) : undefined,
 })
 const sockets = new Set<WebSocket>()
 

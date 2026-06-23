@@ -2,18 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { useModal } from '../useModal'
 import { parseAmount, timeAgo } from '../format'
+import { explorerTxUrl } from '../explorer'
 import NetworkSelect from './NetworkSelect'
 import type { Network } from '../types'
-
-// Per-chain explorer for the confirmed-swap tx link.
-const EXPLORER: Record<string, string> = {
-  base: 'https://basescan.org',
-  arbitrum: 'https://arbiscan.io',
-  optimism: 'https://optimistic.etherscan.io',
-  polygon: 'https://polygonscan.com',
-  bnb: 'https://bscscan.com',
-  solana: 'https://solscan.io',
-}
 
 interface SwapToken { symbol: string; address: string; decimals: number; name?: string; logoURI?: string; custom?: boolean }
 const nativeDecimals = (net: Network) => (net.id === 'solana' ? 9 : 18) // SOL = 9, EVM = 18
@@ -350,7 +341,7 @@ export default function SwapPanel() {
                       </div>
                       <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
                         <span className="capitalize">{s.toNetwork ? `${s.network} → ${s.toNetwork}${s.bridge ? ` · ${s.bridge}` : ''}` : s.network} · {timeAgo(s.ts)}</span>
-                        {EXPLORER[s.network] && s.txHash && <a className="text-indigo-300 hover:underline" href={`${EXPLORER[s.network]}/tx/${s.txHash}`} target="_blank" rel="noopener noreferrer">tx ↗</a>}
+                        {s.txHash && explorerTxUrl(s.network, s.txHash) && <a className="text-indigo-300 hover:underline" href={explorerTxUrl(s.network, s.txHash)!} target="_blank" rel="noopener noreferrer">tx ↗</a>}
                       </div>
                     </div>
                   ))}
@@ -444,7 +435,7 @@ export default function SwapPanel() {
                 {done ? (
                   <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-500/[0.07] p-3 text-sm text-emerald-200">
                     ✓ {crossChain ? 'Bridge swap submitted — settling on the destination chain.' : 'Swap confirmed.'}{' '}
-                    {EXPLORER[net.id] && <a className="font-semibold underline" href={`${EXPLORER[net.id]}/tx/${done}`} target="_blank" rel="noopener noreferrer">View source tx →</a>}
+                    {done && explorerTxUrl(net.id, done) && <a className="font-semibold underline" href={explorerTxUrl(net.id, done)!} target="_blank" rel="noopener noreferrer">View source tx →</a>}
                     <button className="btn-ghost mt-2 w-full !py-1.5 text-xs" onClick={() => { setDone(null); setAmount('') }}>Swap again</button>
                   </div>
                 ) : (

@@ -2,18 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useStore } from '../store'
 import type { Withdrawal, WithdrawalsPayload } from '../types'
 import { fmtUsd, fmtQty, parseAmount, timeAgo } from '../format'
+import { explorerTxUrl } from '../explorer'
 import { useAddressBook } from '../addressBook'
-
-// Per-chain block explorers for the confirmed-withdrawal tx links (EVM live chains
-// + Solana). The link is built as `${base}/tx/${txHash}`, which solscan.io also uses.
-const EXPLORER: Record<string, string> = {
-  base: 'https://basescan.org',
-  arbitrum: 'https://arbiscan.io',
-  optimism: 'https://optimistic.etherscan.io',
-  polygon: 'https://polygonscan.com',
-  bnb: 'https://bscscan.com', // network id is 'bnb' (not 'bsc') — keep this in sync
-  solana: 'https://solscan.io',
-}
 
 const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a)
 
@@ -205,7 +195,7 @@ export default function WithdrawPanel() {
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Recent withdrawals</div>
             <div className="max-h-56 space-y-1 overflow-auto">
               {history.map((w) => {
-                const link = w.txHash && EXPLORER[w.network] ? `${EXPLORER[w.network]}/tx/${w.txHash}` : null
+                const link = w.txHash ? explorerTxUrl(w.network, w.txHash) : null
                 return (
                   <div key={w.id} className="flex items-center gap-2 rounded-lg border border-white/[0.05] px-3 py-2 text-xs">
                     <div className="min-w-0 flex-1">

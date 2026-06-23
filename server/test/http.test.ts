@@ -16,7 +16,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'pulsetrade-http-')
 for (const k of ['ZEROX_API_KEY', 'BOT_WALLET_KEY', 'SOLANA_WALLET_KEY', 'TURNKEY_API_PUBLIC_KEY', 'TURNKEY_API_PRIVATE_KEY', 'TURNKEY_ORGANIZATION_ID', 'TURNKEY_EVM_ADDRESS', 'TURNKEY_SOLANA_ADDRESS'])
   delete process.env[k]
 
-const { createApp, tokenOk, shouldDowngradeLiveOnBoot, liveArmedButNoToken, invalidCapEnv, missingDedicatedRpc } = await import('../src/app.js')
+const { createApp, tokenOk, wsAuthOk, shouldDowngradeLiveOnBoot, liveArmedButNoToken, invalidCapEnv, missingDedicatedRpc } = await import('../src/app.js')
 
 const TOKEN = 'secret-token-abcdefghijklmnop'
 let authedSrv: Server, openSrv: Server
@@ -204,6 +204,14 @@ test('tokenOk: matches the exact token, rejects everything else in constant time
   assert.equal(tokenOk(undefined, TOKEN), false, 'missing provided → false')
   assert.equal(tokenOk(TOKEN, undefined), false, 'no engine token → false (auth disabled handled upstream)')
   assert.equal(tokenOk('', ''), false, 'empty/empty → false')
+})
+
+test('P2-3: wsAuthOk gates the WS upgrade — open without a token, requires ?token= with one', () => {
+  assert.equal(wsAuthOk('/ws', undefined), true, 'no engine token → open (dev)')
+  assert.equal(wsAuthOk('/ws?token=secret', 'secret'), true, 'matching ?token= → allowed')
+  assert.equal(wsAuthOk('/ws', 'secret'), false, 'token configured but none provided → rejected')
+  assert.equal(wsAuthOk('/ws?token=wrong', 'secret'), false, 'wrong token → rejected')
+  assert.equal(wsAuthOk(undefined, 'secret'), false, 'no url → rejected')
 })
 
 test('shouldDowngradeLiveOnBoot: persisted live downgrades unless RESUME_LIVE_ON_BOOT=true', () => {

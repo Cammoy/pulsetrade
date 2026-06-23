@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useAccount, useBalance, useConnect, useDisconnect, type Connector } from '../wallet'
-
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+import { shortAddr as short } from '../format'
 
 export default function WalletButton() {
   const { address, isConnected, chain } = useAccount()

@@ -5,7 +5,7 @@ import { botsForMode } from './stats'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import ChannelHeader from './components/ChannelHeader'
-import StatsBar from './components/StatsBar'
+import Overview from './components/Overview'
 import BotCard from './components/BotCard'
 import ArchivedBots from './components/ArchivedBots'
 import TradeList from './components/TradeList'
@@ -140,8 +140,8 @@ function Main() {
             ) : (
               <>
                 <section className="space-y-3">
-                  <SectionLabel title="Overview" sub="Your portfolio at a glance" />
-                  <StatsBar />
+                  <SectionLabel title="Dashboard" sub="Your whole operation at a glance" />
+                  <Overview />
                 </section>
 
                 {/* Market pulse is always one tap/scroll away — compact strip on the tablet/phone home */}

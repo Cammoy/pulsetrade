@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { useStore } from '../store'
 import { useShallow } from 'zustand/react/shallow'
 import { useModal } from '../useModal'
@@ -31,63 +31,46 @@ export default function BottomNav() {
 
   // Smart Money lives in the More sheet now, so "More" reads active on that view too.
   const activeKey = moreOpen ? 'more' : view === 'smart' ? 'more' : view
-  const railRef = useRef<HTMLDivElement>(null)
-  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
-  const [pill, setPill] = useState<{ left: number; width: number }>({ left: 0, width: 0 })
-
-  // Measure the active tab and slide the indicator to it (re-measures on resize/rotate).
-  useLayoutEffect(() => {
-    const measure = () => {
-      const el = itemRefs.current[activeKey]
-      const rail = railRef.current
-      if (!el || !rail) return
-      setPill({ left: el.offsetLeft, width: el.offsetWidth })
-    }
-    measure()
-    if (typeof ResizeObserver === 'undefined' || !railRef.current) return
-    const ro = new ResizeObserver(measure)
-    ro.observe(railRef.current)
-    return () => ro.disconnect()
-  }, [activeKey])
-
+  // A tab: the icon sits in a rounded "squircle" that fills with the accent when active,
+  // with a matching tinted label below (inactive = muted).
   const Tab = ({ id, label, onClick }: { id: string; label: string; onClick: () => void }) => {
     const active = activeKey === id
     return (
       <button
-        ref={(el) => { itemRefs.current[id] = el }}
         onClick={onClick}
         aria-label={label}
         aria-current={active ? 'page' : undefined}
-        className={`tap relative z-10 flex flex-1 flex-col items-center gap-1 py-2 transition-colors duration-200 active:scale-90 ${
+        className={`tap relative z-10 flex flex-1 flex-col items-center gap-1 active:scale-90 ${
           active ? 'text-indigo-500 dark:text-indigo-300' : 'text-slate-400 dark:text-slate-500'
         }`}
       >
-        {ICONS[id]}
-        <span className={`text-[10px] font-semibold tracking-tight transition-opacity ${active ? 'opacity-100' : 'opacity-80'}`}>{label}</span>
+        <span
+          className={`flex h-11 w-11 items-center justify-center rounded-2xl transition-all duration-200 ${
+            active
+              ? 'bg-indigo-500/10 ring-1 ring-inset ring-indigo-500/25 dark:bg-indigo-400/[0.16] dark:ring-indigo-400/30'
+              : ''
+          }`}
+        >
+          {ICONS[id]}
+        </span>
+        <span className="text-[10px] font-semibold tracking-tight">{label}</span>
       </button>
     )
   }
 
   return (
     <>
-      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-[var(--header)] backdrop-blur-xl lg:hidden">
-        <div ref={railRef} className="relative mx-auto flex max-w-md items-end px-1">
-          {/* sliding active indicator */}
-          {pill.width > 0 && (
-            <span
-              aria-hidden
-              className="absolute top-1 h-[46px] rounded-2xl bg-indigo-500/[0.12] ring-1 ring-indigo-400/20 dark:bg-indigo-400/[0.14]"
-              style={{ left: pill.left, width: pill.width, transform: 'translateZ(0)', transition: 'left 0.32s var(--ease-out), width 0.32s var(--ease-out)' }}
-            />
-          )}
+      {/* Floating rounded "island" — inset from the edges with a safe-area gap below; taps in
+          the surrounding gap fall through (pointer-events-none on the wrapper). */}
+      <nav className="pb-safe pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 lg:hidden">
+        <div className="pointer-events-auto mx-auto flex max-w-md items-center gap-1 rounded-[28px] border border-white/[0.08] bg-[var(--header)] px-2.5 py-2 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.6)] backdrop-blur-xl">
           <Tab id="home" label="Bots" onClick={() => setView('home')} />
           <Tab id="portfolio" label="Wallet" onClick={() => setView('portfolio')} />
-          {/* center "New bot" action */}
+          {/* center "New bot" action — a vibrant squircle with a soft glow */}
           <button
             onClick={() => openWizard(true)}
             aria-label="New bot"
-            className="brand-gradient relative z-10 mx-1 -mt-5 flex shrink-0 items-center justify-center rounded-[18px] text-2xl text-[var(--ink)] shadow-lg shadow-indigo-500/30 transition-transform active:scale-90 dark:shadow-fuchsia-500/40"
-            style={{ height: 54, width: 54 }}
+            className="tap relative z-10 mx-0.5 flex h-14 w-14 shrink-0 items-center justify-center rounded-[20px] bg-gradient-to-br from-fuchsia-500 via-violet-500 to-indigo-500 text-[var(--ink)] shadow-[0_8px_22px_-2px_rgba(139,92,246,0.65)] transition-transform active:scale-90"
           >
             <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           </button>

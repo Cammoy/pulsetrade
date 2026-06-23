@@ -5,6 +5,7 @@
 
 import { state, save, uid, type TrackedAsset, type TrackerLot, type TrackerSell } from './store.js'
 import { getSpotPrices, getCandles, cgHeaders } from './prices.js'
+import { ttlCache } from './ttl-cache.js'
 
 const num = (v: unknown): number => {
   const n = Number(v)
@@ -348,26 +349,25 @@ function downsample(xs: number[], target: number): number[] {
 
 // ── Coin search (for the add-position picker) ────────────────────────────────
 
-const searchCache = new Map<string, { at: number; rows: CoinHit[] }>()
+const searchCache = ttlCache<CoinHit[]>(600_000)
 export interface CoinHit { id: string; symbol: string; name: string; thumb: string | null; rank: number | null }
 
 /** Proxy CoinGecko /search so the add-position UI can resolve a coin → its id. */
 export async function searchCoins(query: string): Promise<CoinHit[]> {
   const q = query.trim().toLowerCase()
   if (q.length < 2) return []
-  const hit = searchCache.get(q)
-  if (hit && Date.now() - hit.at < 600_000) return hit.rows
+  const fresh = searchCache.fresh(q)
+  if (fresh) return fresh
   try {
     const res = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`, { headers: cgHeaders(), signal: AbortSignal.timeout(8000) })
-    if (!res.ok) return hit?.rows ?? []
+    if (!res.ok) return searchCache.stale(q) ?? []
     const data: any = await res.json()
     const rows: CoinHit[] = (Array.isArray(data?.coins) ? data.coins : []).slice(0, 15).map((c: any) => ({
       id: String(c.id), symbol: String(c.symbol ?? '').toUpperCase(), name: String(c.name ?? c.id), thumb: typeof c.thumb === 'string' ? c.thumb : null, rank: Number.isFinite(c.market_cap_rank) ? c.market_cap_rank : null,
     }))
-    searchCache.set(q, { at: Date.now(), rows })
-    return rows
+    return searchCache.set(q, rows)
   } catch {
-    return hit?.rows ?? []
+    return searchCache.stale(q) ?? []
   }
 }
 
@@ -387,19 +387,19 @@ export interface CoinMarket {
   fdvUsd: number | null
 }
 const finiteOrNull = (v: unknown): number | null => (Number.isFinite(Number(v)) ? Number(v) : null)
-const marketCache = new Map<string, { at: number; data: CoinMarket }>()
+const marketCache = ttlCache<CoinMarket>(600_000)
 
 export async function coinMarket(id: string): Promise<CoinMarket | null> {
   const cid = id.trim().toLowerCase()
   if (!cid) return null
-  const hit = marketCache.get(cid)
   // 10-min cache: market cap + supply move slowly, and it spares the rate-limited free tier.
-  if (hit && Date.now() - hit.at < 600_000) return hit.data
+  const fresh = marketCache.fresh(cid)
+  if (fresh) return fresh
   // Direct fetch (like searchCoins) — this is a one-shot, user-initiated lookup, so it must
   // NOT be gated by the engine's shared background-polling 429 backoff (which would starve it).
   try {
     const res = await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${encodeURIComponent(cid)}`, { headers: cgHeaders(), signal: AbortSignal.timeout(8000) })
-    if (!res.ok) return hit?.data ?? null
+    if (!res.ok) return marketCache.stale(cid) ?? null
     const data: unknown = await res.json()
     const m = (Array.isArray(data) ? data[0] : null) as Record<string, unknown> | null
     if (m) {
@@ -414,11 +414,10 @@ export async function coinMarket(id: string): Promise<CoinMarket | null> {
         totalSupply: finiteOrNull(m.total_supply),
         fdvUsd: finiteOrNull(m.fully_diluted_valuation),
       }
-      marketCache.set(cid, { at: Date.now(), data: out })
-      return out
+      return marketCache.set(cid, out)
     }
   } catch {
     /* fall through to stale */
   }
-  return hit?.data ?? null // rate-limited / failure / not found → serve stale if we have it
+  return marketCache.stale(cid) ?? null // rate-limited / failure / not found → serve stale if we have it
 }

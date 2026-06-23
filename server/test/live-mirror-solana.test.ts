@@ -18,6 +18,7 @@ const PRICES: Record<string, number> = { solana: 150, 'jupiter-exchange-solana':
 const { state } = await import('../src/store.js')
 const { createBot, __test } = await import('../src/engine.js')
 const { getSpotPrices } = await import('../src/prices.js')
+const { SOL_MINT } = await import('../src/live-solana.js')
 const { settle, live, execBuy } = __test
 
 const realLive = { ...live }
@@ -57,6 +58,23 @@ test('UT-1: a Solana full-exit sell clamps to THIS bot’s attributed holdings, 
   }) as typeof live.executeSolanaSwap
   await settle(a, { type: 'sell', fraction: 1, reason: 'out', exit: true }, 1)
   assert.equal(sold, 60n * 10n ** 6n, 'clamped to A’s 60 JUP, never the 200 shared-wallet aggregate')
+})
+
+test('P1-2: a Solana live buy books the REAL SOL outflow (input + fees) to the spend caps, not the intended USD', async () => {
+  const bot = solBot()
+  // SOL reads: #0 = reserve check (5 SOL), #1 = post-swap after-read (4.32 SOL) → 0.68 SOL out.
+  // 0.68 SOL × $150 = $102 measured outflow — MORE than the intended $100 (fees), proving it's measured.
+  let solReads = 0
+  let jupReads = 0
+  live.splTokenBalanceBaseUnits = (async (mint: string) =>
+    mint === SOL_MINT
+      ? (solReads++ === 0 ? 5_000_000_000n : 4_320_000_000n)
+      : (jupReads++ === 0 ? 0n : 50_000_000n)) as typeof live.splTokenBalanceBaseUnits
+  live.executeSolanaSwap = (async () => 'sig') as typeof live.executeSolanaSwap
+  await settle(bot, { type: 'buy', usd: 100, reason: 'in' }, 1)
+  assert.ok(bot.position.qty > 0, 'fill committed')
+  assert.ok(Math.abs(state.liveSpend.usd - 102) < 1e-6, `daily cap = measured SOL outflow $102, got ${state.liveSpend.usd}`)
+  assert.ok(Math.abs(state.breaker.spentUsd - 102) < 1e-6, `lifetime spend = measured outflow, got ${state.breaker.spentUsd}`)
 })
 
 test('UT-1: a Solana buy is REFUSED when the SOL balance leaves no gas reserve', async () => {

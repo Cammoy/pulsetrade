@@ -378,7 +378,7 @@ button, a, summary, label, input, select, textarea,
 }
 
 .has-bottom-nav {
-  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  padding-bottom: calc(90px + env(safe-area-inset-bottom));
 }
 
 /* Bottom nav is present below lg (1024px); reclaim the space on desktop. */

@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useStore } from '../store'
+import { useStore, jpost } from '../store'
 import type { WalletProfile } from '../types'
-import { fmtUsd, fmtSign, pnlColor, timeAgo, parseAmount } from '../format'
+import { fmtUsd, fmtSign, pnlColor, timeAgo, parseAmount, shortAddr as short } from '../format'
 import { useModal } from '../useModal'
 import Sparkline from './Sparkline'
 
-const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
 
 /**
  * Per-wallet smart-money account view: net-flow chart, per-token flows, recent
@@ -13,7 +12,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
  * automatically (a budget that mirrors every buy it makes).
  */
 export default function WalletAccount({ address, onClose }: { address: string; onClose: () => void }) {
-  const { meta, follows, refresh, confirm } = useStore()
+  const { meta, follows, refresh, confirm, notify } = useStore()
   const [profile, setProfile] = useState<WalletProfile | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -55,8 +54,18 @@ export default function WalletAccount({ address, onClose }: { address: string; o
     } catch { setErr('Engine unreachable') }
     setBusy(false)
   }
-  const stopFollow = async (id: string, liquidate: boolean) => { await fetch(`/api/follows/${id}/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ liquidate }) }); await refresh() }
-  const deleteFollow = async (id: string) => { await fetch(`/api/follows/${id}`, { method: 'DELETE' }); await refresh() }
+  // Money-moving (stop & liquidate sells real positions) — surface any server error instead
+  // of swallowing it; always refresh so the UI reflects the true server state on failure.
+  const stopFollow = async (id: string, liquidate: boolean) => {
+    const out = await jpost<{ error?: string }>(`/api/follows/${id}/stop`, { liquidate })
+    if (out.error) notify(out.error, 'error')
+    await refresh()
+  }
+  const deleteFollow = async (id: string) => {
+    const out = await jpost<{ error?: string }>(`/api/follows/${id}`, undefined, 'DELETE')
+    if (out.error) notify(out.error, 'error')
+    await refresh()
+  }
 
   if (!meta) return null
   const s = profile?.stats

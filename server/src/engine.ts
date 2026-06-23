@@ -25,6 +25,7 @@ import { EVM_ADDR } from './validators.js'
 import { live } from './live-registry.js'
 import { runExclusive, drainLanes } from './lanes.js'
 import { providerHealth, alertConfigured, notifyAsync } from './health.js'
+import { isWin, isLoss } from './pnl.js'
 import { broadcast, setBroadcast, type Broadcast } from './broadcast.js'
 import { creditVault, vaultBalance } from './vault.js'
 // Re-export the profit-vault / withdrawal API (moved to ./vault.js) so app.ts keeps
@@ -49,9 +50,6 @@ export type { DailyCap } from './safety-math.js'
 import { parseUnits, getAddress } from 'viem'
 
 const TICK_MS = 20_000
-// |realized P&L| below this ($0.01) is break-even/dust — not counted as a win or loss,
-// so a meaningless round trip can't inflate the win rate. [P2-15]
-const DUST_PNL = 0.01
 
 // ── Activity-log number formatting (cosmetic — never touches accounting) ──────
 // Sub-cent token prices must not collapse to "$0" (toLocaleString rounds at 3dp),
@@ -216,11 +214,10 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
 
   bot.stats.realizedUsd += pnl
   bot.stats.feesUsd += fee
-  // Strict win/loss: only a real gain is a WIN. A break-even (pnl≈0) or dust round trip
-  // is NEITHER — counting break-evens as wins inflates the exact win-rate the owner uses
-  // to judge edge. |pnl| below a cent is noise, not a result. [P2-15]
-  if (pnl > DUST_PNL) bot.stats.wins++
-  else if (pnl < -DUST_PNL) bot.stats.losses++
+  // Strict win/loss via the shared definition (./pnl.js) so the live win-rate matches the
+  // backtest/Profit-Finder exactly. A break-even or dust round trip is NEITHER. [P2-15]
+  if (isWin(pnl)) bot.stats.wins++
+  else if (isLoss(pnl)) bot.stats.losses++
   if (exit || p.qty === 0) bot.state.lastExitAt = Date.now()
 
   const ts = Date.now()
@@ -228,8 +225,8 @@ function execSell(bot: Bot, price: number, fraction: number, reason: string, exi
   m.volumeUsd += gross
   m.feesUsd += fee
   m.realizedUsd += pnl
-  if (pnl > DUST_PNL) m.wins++
-  else if (pnl < -DUST_PNL) m.losses++
+  if (isWin(pnl)) m.wins++
+  else if (isLoss(pnl)) m.losses++
   m.byRisk[bot.risk] = (m.byRisk[bot.risk] ?? 0) + pnl
   if (swept) m.nativeTakenUsd += swept.usd
 
@@ -298,6 +295,56 @@ function applyHoldingDelta(bot: Bot, side: 'buy' | 'sell', before: bigint, after
   if (sold > mine) log(bot, 'sell delta exceeded own attributed holdings — surplus flagged for reconcile', 'warn')
   bot.realHeld = (mine - debit).toString()
   return sold
+}
+
+/**
+ * Shared post-confirm measurement for a live fill — used by BOTH the EVM and Solana branches
+ * of mirrorLive so the two chains' money math can never drift. The swap is ALREADY confirmed
+ * on-chain when this runs, so post-state reads MUST NOT throw past here: an unreadable read
+ * degrades to an unmeasurable delta (settle commits the quote estimate + flags untrusted),
+ * never a lost confirmation. Returns the committed-fill delta. [MP-1, P1-2]
+ *
+ * Chain differences are injected: the token/sweep/native balance readers (thunks, only awaited
+ * when needed) and `nativeDivisor` (1e18 EVM wei · 1e9 Solana lamports).
+ */
+async function measureFill(o: {
+  bot: Bot
+  side: 'buy' | 'sell'
+  before: bigint
+  tokenAddress: string // lowercased — for the returned delta
+  decimals: number
+  nativePrice: number | undefined
+  nativeDivisor: number
+  sweepUsdt: boolean
+  usdtDecimals: number
+  usdtCg: string
+  sweepBefore: bigint // sell only
+  nativeBefore: bigint | undefined // buy only — pre-swap native balance, the outflow base
+  readToken: () => Promise<bigint>
+  readSweep: () => Promise<bigint>
+  readNative: () => Promise<bigint>
+  confirmLog: string
+}): Promise<LiveResult> {
+  let after = o.before
+  try { after = await o.readToken() } catch { /* post-confirm read failed → unmeasurable, never a lost confirmation */ }
+  const baseUnits = applyHoldingDelta(o.bot, o.side, o.before, after)
+  let proceedsUsd: number | undefined
+  let nativeSpentUsd: number | undefined
+  if (o.side === 'sell') {
+    // Real sweep asset RECEIVED → realized P&L tracks the WALLET, not the quote. USDT ≈ $1;
+    // native valued at the last-known price (already reflects exit impact). recv≤0 → modeled. [MP-1]
+    let recv = 0n
+    try { recv = (await o.readSweep()) - o.sweepBefore } catch { /* unmeasurable → execSell models proceeds */ }
+    if (recv > 0n) proceedsUsd = o.sweepUsdt ? (Number(recv) / 10 ** o.usdtDecimals) * (spot(o.usdtCg) ?? 1) : o.nativePrice ? (Number(recv) / o.nativeDivisor) * o.nativePrice : undefined
+  } else if (o.nativeBefore !== undefined && o.nativePrice) {
+    // Real native outflow (input + gas) → the spend caps track the wallet. Sane-decrease only;
+    // otherwise undefined → settle falls back to the intended USD (never mis-books a buy). [P1-2]
+    let nativeAfter = o.nativeBefore
+    try { nativeAfter = await o.readNative() } catch { /* unmeasurable → modeled */ }
+    if (nativeAfter < o.nativeBefore) nativeSpentUsd = (Number(o.nativeBefore - nativeAfter) / o.nativeDivisor) * o.nativePrice
+  }
+  log(o.bot, o.confirmLog, 'info')
+  return { ok: true, delta: { tokenAddress: o.tokenAddress, decimals: o.decimals, baseUnits, proceedsUsd, nativeSpentUsd } }
 }
 
 /**
@@ -397,35 +444,16 @@ async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: numb
           // Sells land in the bot's sweep target (USDT or native).
           buyTokenAddress: side === 'sell' && bot.sweepTo === 'usdt' ? net.usdt.address : undefined,
         })
-        // The swap is CONFIRMED on-chain now. A transient RPC failure on the post-swap
-        // measurement reads must NEVER throw past this point — that would return ok:false and
-        // make settle() skip booking a spend that REALLY happened, silently under-counting the
-        // live-spend cap. An unreadable post-state → UNMEASURABLE delta (baseUnits 0), which
-        // settle commits at the quote estimate + flags the position untrusted for reconcile.
-        let after = before
-        try { after = await live.tokenBalanceBaseUnits(net.chainId, tokenAddress) } catch { /* post-confirm read failed → unmeasurable, never a lost confirmation */ }
-        const baseUnits = applyHoldingDelta(bot, side, before, after)
-        let proceedsUsd: number | undefined
-        let nativeSpentUsd: number | undefined
-        if (side === 'sell') {
-          let recv = 0n
-          try { recv = (await readSweepEvm()) - sweepBefore } catch { /* unmeasurable → execSell models proceeds */ }
-          // Value the REAL sweep asset received. USDT = ~$1 stable. Native: use the last-known
-          // native price even mid-backoff — `recv` is a real on-chain amount that already
-          // reflects the exit's price impact, so measuring it (at a ≤few-min-old native price)
-          // feeds the loss-breaker far truer P&L than the impact-blind modeled fallback would.
-          if (recv > 0n) proceedsUsd = sweepUsdt ? (Number(recv) / 10 ** net.usdt.decimals) * (spot(net.usdt.cg) ?? 1) : nativePrice ? (Number(recv) / 1e18) * nativePrice : undefined
-        } else if (nativeBefore !== undefined && nativePrice) {
-          // Measure the REAL native outflow (input + gas) so the daily/lifetime spend caps
-          // track the wallet, not the quote. Only when the after-read is a sane DECREASE;
-          // an unreadable/wrong-direction read → undefined → settle falls back to the
-          // intended USD (never over/under-books a confirmed buy). [P1-2]
-          let nativeAfter = nativeBefore
-          try { nativeAfter = await live.nativeBalanceWei(net.chainId) } catch { /* unmeasurable → modeled */ }
-          if (nativeAfter < nativeBefore) nativeSpentUsd = (Number(nativeBefore - nativeAfter) / 1e18) * nativePrice
-        }
-        log(bot, `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`, 'info')
-        return { ok: true, delta: { tokenAddress: lower, decimals, baseUnits, proceedsUsd, nativeSpentUsd } }
+        // Post-confirm measurement + accounting is shared with the Solana branch (measureFill)
+        // so the two chains' money math can't drift. EVM native = wei (1e18).
+        return measureFill({
+          bot, side, before, tokenAddress: lower, decimals, nativePrice, nativeDivisor: 1e18,
+          sweepUsdt, usdtDecimals: net.usdt.decimals, usdtCg: net.usdt.cg, sweepBefore, nativeBefore,
+          readToken: () => live.tokenBalanceBaseUnits(net.chainId, tokenAddress),
+          readSweep: readSweepEvm,
+          readNative: () => live.nativeBalanceWei(net.chainId),
+          confirmLog: `On-chain ${side} confirmed: ${hash.slice(0, 18)}…`,
+        })
       })
     }
 
@@ -463,28 +491,15 @@ async function mirrorLive(bot: Bot, side: 'buy' | 'sell', usd: number, qty: numb
           amountBaseUnits: cap,
         })
       }
-      // Post-confirm reads are resilient (see EVM branch): a confirmed swap is never discarded
-      // by a transient RPC failure, so the spend booking + P&L always run.
-      let after = before
-      try { after = await live.splTokenBalanceBaseUnits(tokenAddress) } catch { /* post-confirm read failed → unmeasurable */ }
-      const baseUnits = applyHoldingDelta(bot, side, before, after)
-      let proceedsUsd: number | undefined
-      let nativeSpentUsd: number | undefined
-      if (side === 'sell') {
-        let recv = 0n
-        try { recv = (await live.splTokenBalanceBaseUnits(sweepMint)) - sweepBefore } catch { /* unmeasurable → modeled */ }
-        // Measure the REAL SOL/USDT received, valued at the last-known price (see EVM branch) —
-        // captures exit impact for the loss-breaker rather than discarding to the modeled proceeds.
-        if (recv > 0n) proceedsUsd = sweepUsdt ? (Number(recv) / 10 ** net.usdt.decimals) * (spot(net.usdt.cg) ?? 1) : nativePrice ? (Number(recv) / 1e9) * nativePrice : undefined // SOL = 9 dp
-      } else if (solBefore !== undefined && nativePrice) {
-        // Real SOL outflow (input + fees) for the spend caps — sane-decrease only, else
-        // settle falls back to the intended USD. SOL = 9 dp. [P1-2]
-        let solAfter = solBefore
-        try { solAfter = await live.splTokenBalanceBaseUnits(SOL_MINT) } catch { /* unmeasurable → modeled */ }
-        if (solAfter < solBefore) nativeSpentUsd = (Number(solBefore - solAfter) / 1e9) * nativePrice
-      }
-      log(bot, `On-chain ${side} confirmed (Jupiter): ${sig.slice(0, 18)}…`, 'info')
-      return { ok: true, delta: { tokenAddress: lower, decimals, baseUnits, proceedsUsd, nativeSpentUsd } }
+      // Same shared post-confirm measurement as the EVM branch (measureFill). SOL native = lamports (1e9).
+      return measureFill({
+        bot, side, before, tokenAddress: lower, decimals, nativePrice, nativeDivisor: 1e9,
+        sweepUsdt, usdtDecimals: net.usdt.decimals, usdtCg: net.usdt.cg, sweepBefore, nativeBefore: solBefore,
+        readToken: () => live.splTokenBalanceBaseUnits(tokenAddress),
+        readSweep: () => live.splTokenBalanceBaseUnits(sweepMint),
+        readNative: () => live.splTokenBalanceBaseUnits(SOL_MINT),
+        confirmLog: `On-chain ${side} confirmed (Jupiter): ${sig.slice(0, 18)}…`,
+      })
     })
   } catch (e: unknown) {
     const error = e instanceof Error ? e.message : String(e)

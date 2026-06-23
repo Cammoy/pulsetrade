@@ -10,7 +10,8 @@
 
 import { state, save, type TrackedWallet } from './store.js'
 import { networkById, tokenOf, NETWORKS } from './networks.js'
-import { spot, getSpotPrices } from './prices.js'
+import { spot, getSpotPrices, tokenLiquidityUsd } from './prices.js'
+import { ttlCache } from './ttl-cache.js'
 
 export const trackingReady = () => Boolean(process.env.ETHERSCAN_API_KEY)
 
@@ -45,6 +46,60 @@ export const KNOWN_MAJOR_SYMBOLS = new Set([
   'LINK', 'UNI', 'PEPE', 'SHIB', 'AAVE', 'MKR', 'ENS', 'LDO', 'CRV', 'COMP', 'SNX', 'SUSHI', 'GRT', 'MANA', 'SAND',
   'ARB', 'OP', 'MATIC', 'WMATIC', 'POL', 'WBNB', 'BNB', 'GMX', 'AVAX', 'WAVAX', 'SOL', 'WSOL', 'JUP',
 ])
+
+// Stablecoins — parking cash in a stable is not a directional "accumulation" signal.
+const STABLE_SYMBOLS = new Set([
+  'USDC', 'USDT', 'DAI', 'USDS', 'USDE', 'FRAX', 'TUSD', 'USDD', 'PYUSD', 'GUSD', 'LUSD',
+  'USD1', 'FDUSD', 'USDT0', 'SUSD', 'CRVUSD', 'SDAI', 'USDL', 'USDX', 'BUSD',
+])
+/** A token that is NOT a smart-money "accumulation" signal: wrapped-native + blue-chip
+ *  majors (WETH, WBTC, stETH, …) and stablecoins. A whale holding WETH or parking in USDC
+ *  is noise, not a play — these are excluded from the consensus / accumulation signals
+ *  (the raw activity feed still shows them). [accum-filter] */
+const isSignalToken = (symbol: string): boolean => {
+  const s = symbol.toUpperCase()
+  return !KNOWN_MAJOR_SYMBOLS.has(s) && !STABLE_SYMBOLS.has(s)
+}
+/** A token not traded by ANY tracked wallet in this long is dead/abandoned (rugged tokens
+ *  stop trading once liquidity is pulled) — drop it from the accumulation signals so the
+ *  view shows live conviction, not stale bags. [stale-filter] */
+const STALE_ACCUM_MS = 90 * 86_400_000 // ~3 months
+/** A token whose total DEX liquidity is below this is effectively dead/rugged — untradeable,
+ *  so it's dropped from every smart-money signal regardless of recency. [liquidity-filter] */
+export const MIN_LIVE_LIQUIDITY_USD = 1_000
+
+/**
+ * Pure: is a token DEAD for smart-money purposes? Two independent conditions (either drops it):
+ *   • no tracked activity in ~3 months (rugged tokens stop trading), and/or
+ *   • a CONFIRMED near-zero DEX pool (liquidity removed).
+ * `liquidityUsd === null` means "unknown" — never a reason to drop (we only drop on a
+ * confirmed-low reserve). Omit `lastTs` to skip the staleness leg (e.g. consensus rows that
+ * were already recency-filtered upstream). [stale-filter + liquidity-filter]
+ */
+export function isDeadToken(opts: { lastTs?: number; liquidityUsd: number | null }, now = Date.now()): boolean {
+  if (opts.lastTs !== undefined && now - opts.lastTs > STALE_ACCUM_MS) return true
+  if (opts.liquidityUsd !== null && opts.liquidityUsd < MIN_LIVE_LIQUIDITY_USD) return true
+  return false
+}
+
+/** Drop tokens whose CURRENT on-chain DEX liquidity is confirmed near-zero (rugged). Bounded
+ *  concurrency + a 30-min cache keep the GeckoTerminal budget sane; unknown/unreadable
+ *  liquidity is KEPT (never a false drop). Order-preserving. Works for any row carrying a
+ *  network + tokenAddress (per-wallet holdings AND consensus rows). [liquidity-filter] */
+export async function dropRuggedTokens<T extends { network: string; tokenAddress: string }>(items: T[], now: number = Date.now()): Promise<T[]> {
+  const dead = new Set<string>()
+  let i = 0
+  const worker = async () => {
+    while (i < items.length) {
+      const it = items[i++]
+      const net = networkById(it.network)
+      const liq = net ? await tokenLiquidityUsd(net.gt, it.tokenAddress).catch(() => null) : null
+      if (isDeadToken({ liquidityUsd: liq }, now)) dead.add(`${it.network}:${it.tokenAddress.toLowerCase()}`)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker))
+  return items.filter((it) => !dead.has(`${it.network}:${it.tokenAddress.toLowerCase()}`))
+}
 
 const ADDR = /^0x[a-fA-F0-9]{40}$/
 
@@ -158,25 +213,24 @@ interface RawTransfer {
   hash: string
 }
 
-const txCache = new Map<string, { at: number; rows: RawTransfer[] }>()
 const TX_TTL = 60_000
+const txCache = ttlCache<RawTransfer[]>(TX_TTL)
 
 async function fetchTransfers(chainId: number, wallet: string): Promise<RawTransfer[] | null> {
   if (!trackingReady()) return null
   const key = `${chainId}:${wallet.toLowerCase()}`
-  const hit = txCache.get(key)
-  if (hit && Date.now() - hit.at < TX_TTL) return hit.rows
+  const fresh = txCache.fresh(key)
+  if (fresh) return fresh
   // Pull a deep window so holdings (netted from history) are reasonably complete.
   const url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=account&action=tokentx&address=${wallet}&page=1&offset=1000&sort=desc&apikey=${process.env.ETHERSCAN_API_KEY}`
   try {
     const res = await fetch(url)
-    if (!res.ok) return hit?.rows ?? null
+    if (!res.ok) return txCache.stale(key) ?? null
     const data: any = await res.json()
     const rows: RawTransfer[] = Array.isArray(data?.result) ? data.result : []
-    txCache.set(key, { at: Date.now(), rows })
-    return rows
+    return txCache.set(key, rows)
   } catch {
-    return hit?.rows ?? null
+    return txCache.stale(key) ?? null
   }
 }
 
@@ -343,9 +397,11 @@ export interface ConsensusRow {
  * token — far more actionable than a raw activity list. Ranked by net inflow,
  * tokens with ≥1 net buyer first.
  */
-export function smartMoneyConsensus(events: SmartMoneyEvent[]): ConsensusRow[] {
+export function smartMoneyConsensus(events: SmartMoneyEvent[], now = Date.now()): ConsensusRow[] {
   const agg = new Map<string, ConsensusRow & { buyerSet: Set<string>; sellerSet: Set<string> }>()
   for (const e of events) {
+    if (!isSignalToken(e.token)) continue // no WETH / wrapped-native / stables in accumulation [accum-filter]
+    if (now - e.ts > STALE_ACCUM_MS) continue // ignore activity older than the staleness window [stale-filter]
     const key = `${e.network}:${e.token}`
     const row =
       agg.get(key) ??
@@ -388,12 +444,14 @@ export interface ConsensusHolding {
  * spam is excluded (Holding.suspicious). Ranked by holder count, then value —
  * the tokens the most independent whales actually hold.
  */
-export function consensusHoldings(perWallet: { label: string; holdings: Holding[] }[]): ConsensusHolding[] {
+export function consensusHoldings(perWallet: { label: string; holdings: Holding[] }[], now = Date.now()): ConsensusHolding[] {
   const totalWallets = perWallet.length
   const byTok = new Map<string, { network: string; token: string; tokenAddress: string; wallets: { label: string; usd: number | null }[]; totalUsd: number; anyPriced: boolean; curated: boolean }>()
   for (const { label, holdings } of perWallet) {
     for (const h of holdings) {
       if (h.suspicious) continue // skip airdrops — only real positions count
+      if (!isSignalToken(h.token)) continue // no WETH / wrapped-native / stables in the accumulation signal [accum-filter]
+      if (now - h.lastTs > STALE_ACCUM_MS) continue // drop dead/abandoned bags (no activity for months — rugged or illiquid) [stale-filter]
       const key = `${h.network}:${h.tokenAddress.toLowerCase()}`
       const cur = byTok.get(key) ?? { network: h.network, token: h.token, tokenAddress: h.tokenAddress, wallets: [], totalUsd: 0, anyPriced: false, curated: false }
       cur.wallets.push({ label, usd: h.usd })
@@ -433,12 +491,16 @@ export async function gatherConsensusHoldings(): Promise<{ holdings: ConsensusHo
   const totalWallets = listWallets().length
   if (!trackingReady()) return { holdings: [], needsKey: true, totalWallets }
   if (chCache && Date.now() - chCache.at < CH_TTL) return { holdings: chCache.data, needsKey: false, totalWallets }
+  const now = Date.now()
   const perWallet: { label: string; holdings: Holding[] }[] = []
   for (const w of listWallets()) {
     const events = await walletEvents(w.address, { allTokens: true }).catch(() => [])
-    perWallet.push({ label: w.label, holdings: computeHoldings(events) })
+    // Drop dead-by-recency bags up front (free); the liquidity check runs once on the ≤30 result.
+    perWallet.push({ label: w.label, holdings: computeHoldings(events).filter((h) => !isDeadToken({ lastTs: h.lastTs, liquidityUsd: null }, now)) })
   }
-  const data = consensusHoldings(perWallet)
+  // Liquidity-prune the bounded consensus set so a rug-pulled (liquidity-removed) token never
+  // surfaces as a "whale consensus" pick, even if it was traded recently. [liquidity-filter]
+  const data = await dropRuggedTokens(consensusHoldings(perWallet, now), now)
   chCache = { at: Date.now(), data }
   return { holdings: data, needsKey: false, totalWallets }
 }
@@ -464,7 +526,7 @@ export function latestSellForToken(events: SmartMoneyEvent[], token: string): Sm
 
 // ── Public feed + per-bot signal ─────────────────────────────────────────────
 
-const feedCache = new Map<string, { at: number; events: SmartMoneyEvent[] }>()
+const feedCache = ttlCache<SmartMoneyEvent[]>(TX_TTL)
 
 /** Recent smart-money activity + the consensus signal across tracked wallets. */
 export async function smartMoneyFeed(network: string): Promise<{ events: SmartMoneyEvent[]; consensus: ConsensusRow[]; needsKey: boolean; unsupported?: boolean }> {
@@ -473,8 +535,8 @@ export async function smartMoneyFeed(network: string): Promise<{ events: SmartMo
   if (!net) return { events: [], consensus: [], needsKey: !trackingReady() }
   if (!net.evm) return { events: [], consensus: [], needsKey: false, unsupported: true } // Etherscan is EVM-only
   if (!trackingReady()) return { events: [], consensus: [], needsKey: true }
-  const hit = feedCache.get(network)
-  if (hit && Date.now() - hit.at < TX_TTL) return { events: hit.events, consensus: smartMoneyConsensus(hit.events), needsKey: false }
+  const fresh = feedCache.fresh(network)
+  if (fresh) return { events: fresh, consensus: smartMoneyConsensus(fresh), needsKey: false }
 
   const all: SmartMoneyEvent[] = []
   for (const w of state.wallets) {
@@ -483,7 +545,7 @@ export async function smartMoneyFeed(network: string): Promise<{ events: SmartMo
   }
   all.sort((a, b) => b.ts - a.ts)
   const events = all.slice(0, 100)
-  feedCache.set(network, { at: Date.now(), events })
+  feedCache.set(network, events)
   return { events, consensus: smartMoneyConsensus(events), needsKey: false }
 }
 
@@ -668,6 +730,12 @@ export async function walletProfile(address: string): Promise<{
   // the rest qty-only) so holdings and activity are complete, not just curated.
   const events = await walletEvents(address, { allTokens: true })
   const stats = computeWalletStats(events)
+  // Holdings shown in the profile drop DEAD bags: no activity in months (free) and, for the
+  // top positions, a confirmed near-zero DEX pool (rug-pulled). Recency-survivors beyond the
+  // liquidity-check cap are kept (recent activity ⇒ almost certainly still alive). [dead-token]
+  const now = Date.now()
+  const recent = computeHoldings(events).filter((h) => !isDeadToken({ lastTs: h.lastTs, liquidityUsd: null }, now))
+  const holdings = [...(await dropRuggedTokens(recent.slice(0, 40), now)), ...recent.slice(40)]
   return {
     wallet: address,
     label,
@@ -675,7 +743,7 @@ export async function walletProfile(address: string): Promise<{
     category: tracked?.category,
     tracking: trackingReady(),
     events: events.slice(0, 200),
-    holdings: computeHoldings(events),
+    holdings,
     stats,
     score: computeWalletScore(stats),
   }

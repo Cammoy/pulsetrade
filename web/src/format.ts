@@ -26,6 +26,14 @@ export const fmtUsd = (value: number, digits?: number) => {
   })
 }
 
+/** Truncate an address for display: `0x1234…cdef`. Default always truncates (head 6 / tail 4);
+ *  pass `min` to leave short strings intact, or head/tail to change the slice. The single
+ *  source of the slice formula — call sites pick the variant via opts. */
+export const shortAddr = (a: string, opts: { min?: number; head?: number; tail?: number } = {}): string => {
+  const { min = 0, head = 6, tail = 4 } = opts
+  return a.length > min ? `${a.slice(0, head)}…${a.slice(-tail)}` : a
+}
+
 export const fmtSign = (value: number) => {
   const v = finite(value)
   return (v >= 0 ? '+' : '') + fmtUsd(v)
