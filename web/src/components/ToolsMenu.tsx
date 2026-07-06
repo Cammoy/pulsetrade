@@ -3,9 +3,10 @@ import { useStore } from '../store'
 import { TOOL_ITEMS, type ToolAction } from './tools'
 
 /**
- * Desktop "Tools" dropdown. Collapses the formerly-scattered emoji header
- * buttons (AI, Smart Money, Tournament, Sniper, Profit Finder, Docs, Tour)
- * into one discoverable menu where every entry has a label and a description.
+ * Desktop "Tools" dropdown — the standalone utilities that aren't bot-creation
+ * (Swap, Profit Calculator, Docs, Tour). The bot-creation methods (Wizard, AI
+ * Trader, Profit Finder, Sniper, Tournament) live under "+ New Bot" → the New Bot
+ * hub instead, so this menu stays focused on tools rather than mixing the two.
  */
 export default function ToolsMenu() {
   const store = useStore()
@@ -48,7 +49,7 @@ export default function ToolsMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Profit Finder, AI Trader, Smart Money, Tournament, Sniper & more"
+        title="Swap, Profit Calculator, Documentation & more"
         className={`btn-ghost shrink-0 whitespace-nowrap ${open ? 'bg-white/[0.09] text-white' : ''}`}
       >
         <span>🧰</span>

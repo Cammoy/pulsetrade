@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Bot } from '../types'
 import { useStore } from '../store'
+import { useShallow } from 'zustand/react/shallow'
 import { fmtSign, fmtUsd, fmtPrice, fmtQty, pnlColor, hhmm, DAY_NAMES } from '../format'
 import { useModal } from '../useModal'
 import PriceChart from './PriceChart'
@@ -53,7 +54,7 @@ function NumberField({ label, value, onChange, suffix, placeholder }: { label: s
  * working cash — raise the budget to top it up first.
  */
 function SniperEditor({ bot }: { bot: Bot }) {
-  const { editBot, control } = useStore()
+  const { editBot, control } = useStore(useShallow((s) => ({ editBot: s.editBot, control: s.control })))
   const s = bot.sniper!
   const [tp, setTp] = useState(String(s.takeProfitPct))
   const [sl, setSl] = useState(String(s.stopLossPct))
@@ -147,8 +148,114 @@ function SniperEditor({ bot }: { bot: Bot }) {
   )
 }
 
+/**
+ * Exit + budget editor for strategy / AI bots. Take-profit & stop-loss default to the risk
+ * tier but can be OVERRIDDEN per bot — the engine swaps them into the decide() path (see
+ * `bot.overrides`). Budget tops up / pulls back working cash. (Snipers use SniperEditor;
+ * copy bots set their exits in the copy config and get the budget-only BudgetEditor.)
+ */
+function StrategyEditor({ bot, tierTp, tierSl, tierLabel }: { bot: Bot; tierTp?: number; tierSl?: number; tierLabel?: string }) {
+  const editBot = useStore((s) => s.editBot)
+  const effTp = bot.overrides?.takeProfitPct ?? tierTp
+  const effSl = bot.overrides?.stopLossPct ?? tierSl
+  const [tp, setTp] = useState(effTp != null ? String(effTp) : '')
+  const [sl, setSl] = useState(effSl != null ? String(effSl) : '')
+  const [budget, setBudget] = useState(String(bot.budgetUsd))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const overridden = bot.overrides?.takeProfitPct != null || bot.overrides?.stopLossPct != null
+
+  // Only send fields the user actually changed from the effective current value.
+  const buildPatch = () => {
+    const p: { takeProfitPct?: number; stopLossPct?: number; budgetUsd?: number } = {}
+    if (tp.trim() !== '' && Number(tp) !== effTp) p.takeProfitPct = Number(tp)
+    if (sl.trim() !== '' && Number(sl) !== effSl) p.stopLossPct = Number(sl)
+    if (budget.trim() !== '' && Number(budget) !== bot.budgetUsd) p.budgetUsd = Number(budget)
+    return p
+  }
+  const dirty = Object.keys(buildPatch()).length > 0
+
+  const save = async () => {
+    setBusy(true)
+    setErr(null)
+    setSaved(false)
+    const out = await editBot(bot.id, buildPatch())
+    if (out.error) setErr(out.error)
+    else setSaved(true)
+    setBusy(false)
+  }
+  const edit = (set: (v: string) => void) => (v: string) => { set(v); setSaved(false) }
+
+  return (
+    <div className="mt-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <h4 className="text-[12px] font-semibold text-slate-200">Exit &amp; budget</h4>
+        {overridden && <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-300">custom</span>}
+        <span className="ml-auto text-[11px] text-slate-500">free cash {fmtUsd(bot.cashUsd)}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <NumberField label="Take-profit" value={tp} onChange={edit(setTp)} suffix="%" placeholder={tierTp != null ? String(tierTp) : ''} />
+        <NumberField label="Stop-loss" value={sl} onChange={edit(setSl)} suffix="%" placeholder={tierSl != null ? String(tierSl) : ''} />
+        <NumberField label="Budget" value={budget} onChange={edit(setBudget)} suffix="$" />
+      </div>
+      {err && <div className="mt-2 rounded-lg bg-rose-500/10 p-2 text-xs text-rose-300">{err}</div>}
+      <div className="mt-2 flex items-center gap-2">
+        <button className="btn-primary !py-1.5 text-sm" disabled={busy || !dirty} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button>
+        {saved && <span className="text-xs text-emerald-300">✓ Saved</span>}
+      </div>
+      <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
+        Take-profit / stop-loss override the {tierLabel ?? bot.risk} tier for THIS bot (applies on the next tick); budget tops up or pulls back free cash.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Budget-only editor for COPY bots — they mirror the wallet and set their exits in the copy
+ * config, so only budget is editable here.
+ */
+function BudgetEditor({ bot }: { bot: Bot }) {
+  const editBot = useStore((s) => s.editBot)
+  const [budget, setBudget] = useState(String(bot.budgetUsd))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const dirty = budget.trim() !== '' && Number(budget) !== bot.budgetUsd
+
+  const save = async () => {
+    setBusy(true)
+    setErr(null)
+    setSaved(false)
+    const out = await editBot(bot.id, { budgetUsd: Number(budget) })
+    if (out.error) setErr(out.error)
+    else setSaved(true)
+    setBusy(false)
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h4 className="text-[12px] font-semibold text-slate-200">Budget</h4>
+        <span className="text-[11px] text-slate-500">free cash {fmtUsd(bot.cashUsd)}</span>
+      </div>
+      <div className="flex items-end gap-2">
+        <div className="flex-1">
+          <NumberField label="Budget" value={budget} onChange={(v) => { setBudget(v); setSaved(false) }} suffix="$" />
+        </div>
+        <button className="btn-primary !py-1.5 text-sm" disabled={busy || !dirty} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>
+        {saved && <span className="pb-2 text-xs text-emerald-300">✓</span>}
+      </div>
+      {err && <div className="mt-2 rounded-lg bg-rose-500/10 p-2 text-xs text-rose-300">{err}</div>}
+      <p className="mt-2 text-[10px] leading-relaxed text-slate-500">Top up to deploy more capital, or reduce to pull back free cash. This bot exits when the tracked wallet sells; its safety-net stop/target are set in the copy configuration.</p>
+    </div>
+  )
+}
+
 export default function BotDetail() {
-  const { selectedBotId, selectBot, bots, trades, meta } = useStore()
+  const { selectedBotId, selectBot, bots, trades, meta } = useStore(
+    useShallow((s) => ({ selectedBotId: s.selectedBotId, selectBot: s.selectBot, bots: s.bots, trades: s.trades, meta: s.meta })),
+  )
   const bot = bots.find((b) => b.id === selectedBotId)
   const [candles, setCandles] = useState<{ t: number; c: number }[]>([])
 
@@ -163,11 +270,15 @@ export default function BotDetail() {
 
   useEffect(() => {
     if (!chartCg) return
+    let alive = true // ignore a resolve after the modal closes / coin changes (no setState-after-unmount)
     setCandles([])
     fetch(`/api/candles/${chartCg}?days=7`)
       .then((r) => r.json())
-      .then(setCandles)
+      .then((c) => { if (alive) setCandles(c) })
       .catch(() => {})
+    return () => {
+      alive = false
+    }
   }, [chartCg])
 
   if (!bot) return null
@@ -256,27 +367,36 @@ export default function BotDetail() {
         {bot.sniper ? (
           <SniperEditor bot={bot} />
         ) : bot.copy ? (
-          <ParamPanel
-            title="Copy parameters"
-            chips={[`mirroring ${bot.copy.walletLabel}`, 'exits when the wallet sells', ...(risk ? [`sizing · ${risk.label}`] : [])]}
-          />
+          <>
+            <ParamPanel
+              title="Copy parameters"
+              chips={[`mirroring ${bot.copy.walletLabel}`, 'exits when the wallet sells', ...(risk ? [`sizing · ${risk.label}`] : [])]}
+            />
+            <BudgetEditor bot={bot} />
+          </>
         ) : bot.ai && risk ? (
-          <ParamPanel
-            title="AI Trader parameters"
-            chips={['Gemini calls buy / sell / hold', `entry ${risk.positionPct}% of budget`, `stop −${risk.stopLossPct}%`, `target +${risk.takeProfitPct}%`]}
-          />
+          <>
+            <ParamPanel
+              title="AI Trader parameters"
+              chips={['Gemini calls buy / sell / hold', `entry ${risk.positionPct}% of budget`, `stop −${bot.overrides?.stopLossPct ?? risk.stopLossPct}%`, `target +${bot.overrides?.takeProfitPct ?? risk.takeProfitPct}%`]}
+            />
+            <StrategyEditor bot={bot} tierTp={risk.takeProfitPct} tierSl={risk.stopLossPct} tierLabel={risk.label} />
+          </>
         ) : risk ? (
-          <ParamPanel
-            title={`Risk parameters · ${risk.label}`}
-            chips={[
-              `entry ${risk.positionPct}% of budget`,
-              `stop −${risk.stopLossPct}%`,
-              `target +${risk.takeProfitPct}%`,
-              `grid ${risk.gridLevels} × ${risk.gridSpacingPct}%`,
-              `RSI ${risk.rsiBuy}/${risk.rsiSell}`,
-              `cooldown ${risk.cooldownMin}m`,
-            ]}
-          />
+          <>
+            <ParamPanel
+              title={`Risk parameters · ${risk.label}`}
+              chips={[
+                `entry ${risk.positionPct}% of budget`,
+                `stop −${bot.overrides?.stopLossPct ?? risk.stopLossPct}%`,
+                `target +${bot.overrides?.takeProfitPct ?? risk.takeProfitPct}%`,
+                `grid ${risk.gridLevels} × ${risk.gridSpacingPct}%`,
+                `RSI ${risk.rsiBuy}/${risk.rsiSell}`,
+                `cooldown ${risk.cooldownMin}m`,
+              ]}
+            />
+            <StrategyEditor bot={bot} tierTp={risk.takeProfitPct} tierSl={risk.stopLossPct} tierLabel={risk.label} />
+          </>
         ) : null}
 
         <div className="mt-4">

@@ -9,7 +9,7 @@ Run any number of automated traders — the same coin at several risk tolerances
 ![Node](https://img.shields.io/badge/Node-%E2%89%A522.5-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-571%20passing-2bd576)
+![Tests](https://img.shields.io/badge/tests-832%20passing-2bd576)
 ![Mode](https://img.shields.io/badge/default-paper--first-6366f1)
 ![Chains](https://img.shields.io/badge/chains-EVM%20%C2%B7%20Solana%20%C2%B7%20ICP-8b5cf6)
 
@@ -40,10 +40,10 @@ npm install
 npm run dev        # engine on :8787  +  web app on :5173
 ```
 
-Open **<http://localhost:5173>**, hit **New Bot**, and follow the wizard — or click **🌤️ One-click All-Weather** for a sensible default. All state persists in `server/data/state.json` (+ an append-only SQLite trade ledger).
+Open **<http://localhost:5173>**, hit **+ New Bot** and pick a creation method from the hub — **Build from scratch** (the guided wizard), **AI Trader**, **Profit Finder**, **Sniper** or **Tournament** — or click **🌤️ One-click All-Weather** for a sensible default. All state persists in `server/data/state.json` (+ an append-only SQLite trade ledger).
 
 ```bash
-npm test           # 571 tests — see Testing
+npm test           # 832 tests — see Testing
 ```
 
 ## 🧠 Strategies
@@ -87,6 +87,7 @@ Five cheap EVM chains + **Solana** + the **Internet Computer**. One EVM wallet w
 
 **📊 Dashboard & market**
 - At-a-glance **Overview**: equity trend, allocation donut, performers, live-safety status
+- **Candlestick chart** (📈) for any coin — real OHLC (CoinGecko), SMA(20) overlay, 1D/7D/30D/90D timeframes (TradingView lightweight-charts)
 - Live **Market** view: risk-on/neutral/risk-off pulse (0–100 composite), Fear & Greed, global stats, top-20 with sparklines + transparent BUY/SELL/HOLD signals
 - Per-bot equity sparkline, price chart with buy/sell markers, decision log
 
@@ -118,11 +119,42 @@ Five cheap EVM chains + **Solana** + the **Internet Computer**. One EVM wallet w
 - **Guided setup + live preview** — single-token copy *or* auto-follow; per-trade size + optional SL/TP. Copies **mirror** the wallet (exit when they sell); a catastrophic stop auto-guards **live** copies
 - Click any wallet for a full analysis — net-flow chart, holdings/allocation, per-token flow, recent trades
 
+**💱 Trade** *(dedicated channel)*
+- A coin **terminal**: pick a coin once → candlestick chart (OHLC + SMA + timeframes) and a single **order ticket** with tabs — **Perp · Limit · Alert · Calc** — all bound to that coin
+- Your open **positions, limit orders & alerts** sit right below with one-tap manage (close / cancel / pause / re-arm / dismiss; **This coin** or **All**). This channel **replaces** the standalone Chart, Positions, Limit Orders and Price Alerts apps — Swap and the full Profit Calculator remain their own apps
+
+**📡 Signal Channel** *(dedicated channel)*
+- **Advisory** perps-style LONG/SHORT calls: entry **zone**, isolated-leverage rec, **TP1/TP2/TP3**, a hard never-moved stop, confidence %, R:R and a one-line AI rationale — informational, never auto-executed
+- **Filter-first pipeline**: scanner (coins in play) → **Gemini validation** (trending? binary-event risk? direction) → **news sentiment** (Gemini, web-grounded, −1…+1, vetoes opposed setups) → **R:R ≥ 1.5** + confidence gate
+- **Always-on Radar** — the top long- *and* short-leaning candidates the scanner is weighing, each tagged `✓ Signal` or `Watching` with the reason it hasn't graduated (so the channel always shows what it's looking at)
+- **Set up & track your own trade** — click any signal to open a ticket: edit entry/leverage/SL/TP1-3 with live R:R, risk-based position size, margin and liquidation estimate; "Track" hands it to the engine, which monitors your levels and alerts on a hit (advisory — never auto-executed). Manage/edit/close them under **My setups**
+- **Forward-test track record** built in — every signal tracked tick-by-tick vs live price (scale-out thirds, fixed stop) for a live win-rate / avg-R / TP1-hit accuracy read *before* you risk capital
+- **Position-size helper** turns the stop distance into a 1–2%-risk order; volatility-scaled leverage cap. Needs `GEMINI_API_KEY`; tune via `SIGNALS_MIN_RR` / `SIGNALS_MIN_CONFIDENCE` / `SIGNALS_SCAN_MS`
+- **Quota-aware & honest**: the free Gemini tier is easy to exhaust (each scan validates several coins + their news). On a `429` a shared cooldown **pauses all AI calls** and resumes automatically — no log-flood, no wasted quota. The channel shows **⏳ AI rate-limited** (not a fake "live"); the radar + your own tracked setups keep working (they need no AI). Posting signals continuously needs a key with available quota (paid tier or after a free-quota reset)
+
+**🔔 Price Alerts**
+- Alert on any coin: **cross above** / **drop below** a price, or **move ±%** from now — one-shot, with re-arm
+- Evaluated every engine tick against fresh prices; fires in-app **and** to Telegram/webhook (if configured)
+
+**🌱 Earn** — a **Portfolio** tab (alongside Holdings · Wallet · Staking · Withdraw)
+- Where to park idle **stablecoins** for yield — a live, safety-filtered shortlist (single-asset stable pools ≥ $5M TVL on supported chains) from **DefiLlama** (free, no key)
+- Ranked by APY with TVL + base/reward split and a **$/yr projector**. Informational; in-app auto-deposit is a gated follow-up
+
+**📋 Limit Orders**
+- Conditional spot orders on any coin: **buy the dip** (fill when price ≤ your target) / **sell the rip** (fill when price ≥ your target)
+- Watched every engine tick; fills at your price **or better**, with fee, and pushes in-app + Telegram/webhook. **Paper** fills (no funds move); live auto-execution via the swap router is a gated follow-up
+
+**🧾 Perps (paper)**
+- Open leveraged **long/short** positions on any coin, marked every tick against **real Hyperliquid prices + funding** (free public API, no key) — CoinGecko spot fallback for unlisted coins
+- Isolated-margin **liquidation** estimate, funding accrual, fees, live PnL/ROE; closes on **take-profit / stop / liquidation** or manually
+- Open from a signal, the trade ticket, or any coin via the Positions panel. **Paper by default** — no funds move
+- **Live executor (Hyperliquid)** is implemented and its order-signing is **verified against real testnet** (`cd server && npm run verify:hyperliquid` signs a non-fillable probe with a throwaway key and confirms the exchange recovers it). It stays **fail-closed** behind two gates: set `HL_API_PRIVATE_KEY` (an *approved API/agent wallet* — never your main key) **and** `HL_ENABLE_LIVE_PERPS=true` in `server/.env` (add `HL_TESTNET=false` for mainnet). Confirm on your funded **testnet** account before going live
+
 **🏆 Extras**
 - **Tournaments**: 2–12 bots, equal budget, live leaderboard + podium
 - **AI Trader** (Gemini), **Auto-sell to USDT**, **schedules** (24/7 or day/hour windows)
 - **Multi-wallet connect** (MetaMask / Coinbase / injected / WalletConnect)
-- **Monthly P&L ledger** + filterable trade history
+- **Monthly P&L ledger** + filterable trade history, with **CSV export** (date, side, asset, qty, price, value, fee, realized P&L) for accounting / taxes
 - Native-feeling responsive UI (mobile bottom-nav, bottom-sheet modals, dark/light)
 
 </td>
@@ -224,11 +256,11 @@ web/     Vite + React + Zustand + Tailwind + viem + lightweight-charts
 
 ```bash
 npm test                                              # all suites
-cd server && node --import tsx --test test/*.test.ts  # 497 server tests
-cd web && npx vitest run                              # 74 web tests
+cd server && node --import tsx --test test/*.test.ts  # 651 server tests
+cd web && npx vitest run                              # 181 web tests
 ```
 
-**571 tests**, no network access (every provider mocked at the fetch layer) — the same `decide()` paths run in tests, backtests, and live. Coverage includes indicators (known-value), every strategy's entry/exit/cooldown, the live-execution reconciliation + every safety guard (breaker, caps, gas reserve, exposure, route/approval allowlist, price staleness), the risk-screen scoring, sniper + safe-feed filters, the Profit Finder ranking, the monthly ledger, crash-safe persistence, and the React store/UI.
+**832 tests** (651 server + 181 web), no network access (every provider mocked at the fetch layer) — the same `decide()` paths run in tests, backtests, and live. Coverage includes indicators (known-value), every strategy's entry/exit/cooldown, the live-execution reconciliation + every safety guard (breaker, caps, gas reserve, exposure, route/approval allowlist, price staleness), the risk-screen scoring, sniper + safe-feed filters, the Profit Finder ranking, the monthly ledger, crash-safe persistence, and the React store/UI.
 
 ## ⚙️ Configuration
 

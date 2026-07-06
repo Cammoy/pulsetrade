@@ -23,6 +23,9 @@ export default function SmartMoney() {
   const [needsKey, setNeedsKey] = useState(false)
   const [loading, setLoading] = useState(false)
   const [wallets, setWallets] = useState<TrackedWallet[]>([])
+  // Bumped by the top "↻ Refresh" so the self-fetching SmartInsights + ConsensusHoldings
+  // panels reload too (not just the feed).
+  const [refreshKey, setRefreshKey] = useState(0)
 
   const [addr, setAddr] = useState('')
   const [label, setLabel] = useState('')
@@ -111,7 +114,7 @@ export default function SmartMoney() {
         </div>
         <div className="flex items-center gap-2">
           <NetworkSelect className="input !w-36 !py-1.5 text-xs" value={network} onChange={setNetwork} networks={meta.networks.filter((n) => n.evm !== false && n.tradeable !== false)} />
-          <button className="btn-ghost !py-1.5 text-xs" onClick={loadFeed} disabled={loading}>
+          <button className="btn-ghost !py-1.5 text-xs" onClick={() => { loadFeed(); setRefreshKey((k) => k + 1) }} disabled={loading}>
             {loading ? 'Loading…' : '↻ Refresh'}
           </button>
         </div>
@@ -125,10 +128,10 @@ export default function SmartMoney() {
       )}
 
       {/* ── AI intelligence: the headline of the dashboard ── */}
-      {!needsKey && <SmartInsights />}
+      {!needsKey && <SmartInsights refreshKey={refreshKey} />}
 
       {/* ── Consensus holdings: what 2+ whales actually hold ── */}
-      {!needsKey && <ConsensusHoldings />}
+      {!needsKey && <ConsensusHoldings refreshKey={refreshKey} />}
 
       <div className="glass p-4">
         <div className="mb-3 flex items-center gap-1 seg-track p-0.5 text-xs">

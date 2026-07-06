@@ -33,7 +33,7 @@ const SECTIONS: Section[] = [
     title: 'Creating bots',
     body: (
       <>
-        <P>Hit <B>+ New Bot</B> for the guided wizard: connect a wallet (optional), choose a network and coin, pick a strategy and risk tolerance, set a budget, and optionally restrict trading to specific days and hours. The review step runs a real 30-day backtest of your exact configuration plus an advisory safety screen.</P>
+        <P>Hit <B>+ New Bot</B> to open the <B>New Bot hub</B> — one chooser with every way to create a bot: <B>🛠️ Build from scratch</B> (the guided wizard), <B>🤖 AI Trader</B>, <B>💡 Profit Finder</B>, <B>🎯 Sniper</B> and <B>🏆 Tournament</B>. The guided wizard: connect a wallet (optional), choose a network and coin, pick a strategy and risk tolerance, set a budget, and optionally restrict trading to specific days and hours. The review step runs a real 30-day backtest of your exact configuration plus an advisory safety screen.</P>
         <H>Running many at once</H>
         <P>Launch any number of bots simultaneously — the same coin under several risk tolerances, or many coins at once. Each keeps its own cash, position, schedule and P&L, so you can compare tolerances side by side; the dashboard shows a P&L-by-tolerance breakdown. One-click <B>🌤️ All-Weather</B> spins up the adaptive strategy on a liquid coin.</P>
         <H>Schedules</H>
@@ -82,7 +82,7 @@ const SECTIONS: Section[] = [
     title: 'Sniper & Auto-Sniper',
     body: (
       <>
-        <P>The <B>🎯 Sniper</B> surfaces freshly created and trending liquidity pools that pass the full safety screen. Selecting a token runs a mandatory screen; if it passes, you set a budget plus exit rules, then snipe. <B>New tokens are extremely high-risk</B> — size snipes small.</P>
+        <P>Open it from <B>+ New Bot → 🎯 Sniper</B>. The <B>Sniper</B> surfaces freshly created and trending liquidity pools that pass the full safety screen. Selecting a token runs a mandatory screen; if it passes, you set a budget plus exit rules, then snipe. <B>New tokens are extremely high-risk</B> — size snipes small.</P>
         <H>Smart exits — take the stake back, ride the runner</H>
         <P>A smart snipe buys its full budget immediately. Once it’s up by your <B>“take stake back”</B> threshold (e.g. +100%) it sells exactly enough to return your <B>original investment</B> to safety (cash + the withdrawable vault), then rides the remainder as risk-free <B>“house money”</B> — trailing it a set % off its peak with <B>no fixed timer</B>, so a strong trend can run 24h+ and a clear reversal closes it. A stop-loss bounds the downside before you’ve de-risked. (A coin that dumps before reaching profit still stops out at a loss — recovery only applies once it’s in profit.)</P>
         <H>Auto-Sniper</H>
@@ -114,8 +114,10 @@ const SECTIONS: Section[] = [
     body: (
       <>
         <P>The <B>📊 Market</B> view is your at-a-glance read on crypto overall: a single <B>regime</B> label (Risk-on / Neutral / Risk-off) with a 0–100 composite blending breadth with the Fear &amp; Greed index, global stats (market cap, 24h volume, BTC/ETH dominance), and the top coins each with a 7-day sparkline and a transparent <B>BUY / SELL / HOLD</B> read from RSI + EMA trend + momentum. Evidence to inform your judgement — <B>not financial advice</B>.</P>
+        <H>Candlestick chart</H>
+        <P>The <B>💱 Trade</B> channel shows a full candlestick chart for any coin — real <B>OHLC</B> from CoinGecko with an <B>SMA(20)</B> overlay and <B>1D / 7D / 30D / 90D</B> timeframes (TradingView lightweight-charts). Search any coin; the period change is read straight off the candles.</P>
         <H>Profit Finder</H>
-        <P>Open <B>💡 Profit Finder</B>, enter a stake, choose a scope (Curated, Top-100 movers, or Trending-safe), and it backtests every strategy × risk tolerance over the same real history — with gas and slippage — and ranks the outcomes by profit, each tagged with its honest <B>Edge</B> verdict and an out-of-sample return. The top result is your best historical configuration for that stake; past performance never assures future returns.</P>
+        <P>From <B>+ New Bot → 💡 Profit Finder</B>, enter a stake, choose a scope (Curated, Top-100 movers, or Trending-safe), and it backtests every strategy × risk tolerance over the same real history — with gas and slippage — and ranks the outcomes by profit, each tagged with its honest <B>Edge</B> verdict and an out-of-sample return. The top result is your best historical configuration for that stake; past performance never assures future returns.</P>
       </>
     ),
   },
@@ -158,6 +160,85 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'trade',
+    title: 'Trade',
+    body: (
+      <>
+        <P>The <B>💱 Trade</B> channel is a one-coin <B>terminal</B>: pick a coin once and everything binds to it — a candlestick chart (OHLC + SMA + 1D/7D/30D/90D) on the left, and a single <B>order ticket</B> on the right with tabs for <B>Perp</B> (open a leveraged paper position), <B>Limit</B> (buy-the-dip / sell-the-rip), <B>Alert</B> (price cross / move), and <B>Calc</B> (a what-if profit estimate).</P>
+        <P>Below the ticket, your open positions, limit orders and alerts are listed together with one-tap close / cancel / pause / re-arm / dismiss — toggle <B>This coin</B> vs <B>All</B> to manage everything in one place. This channel <B>replaces</B> the old separate Chart, Positions, Limit Orders and Price Alerts apps. Everything is paper/advisory; arbitrary token swaps stay in the <B>Swap</B> app and the full <B>Profit Calculator</B> remains its own app (the Calc tab here is a quick what-if).</P>
+      </>
+    ),
+  },
+  {
+    id: 'signals',
+    title: 'Signal Channel',
+    body: (
+      <>
+        <P>The <B>📡 Signals</B> channel posts <B>advisory</B> LONG/SHORT trade calls for listed coins. It’s built for perps traders — each signal carries a direction, an <B>entry zone</B> (a range, to scale in), an isolated-<B>leverage</B> recommendation, three take-profits, a hard stop-loss, a confidence score and a one-sentence AI rationale. Signals are <B>informational</B>: nothing here is auto-executed by the bots — you place the trade on your own venue.</P>
+        <H>The filter-first workflow</H>
+        <P>Quality over noise — a setup only becomes a post if it clears <em>every</em> stage:</P>
+        <ul className="mb-3 ml-4 list-disc space-y-1.5">
+          <LI><B>Scanner</B> — sweeps the top coins for ones genuinely <em>in play</em> (unusual turnover, a volatility breakout, a momentum shift) with a clear directional technical edge; ranging, illiquid and stable coins are dropped.</LI>
+          <LI><B>AI validation</B> — Gemini reads the chart history <em>and</em> live news, and must confirm the market is <B>trending</B> (not choppy), flag any imminent <B>binary event</B> (CPI, FOMC, a major unlock) that would invalidate the setup, and pick the direction.</LI>
+          <LI><B>News sentiment</B> — Gemini, grounded with web search, scores each asset’s news <B>−1…+1</B>. A bullish technical setup into <B>strongly negative</B> news is discarded; milder opposition lowers confidence.</LI>
+          <LI><B>Risk gate</B> — the structural stop and projected targets must give a <B>reward:risk ≥ 1.5</B>, and confidence must clear the floor. Anything less is rejected.</LI>
+        </ul>
+        <H>Reading a signal</H>
+        <P>The stop-loss is the <B>invalidation level</B> — it is never widened. The <B>risk ladder</B> draws stop → entry → TP1/TP2/TP3 left to right and fills in as targets print. The built-in <B>position-size helper</B> turns your account size and chosen risk (0.5–2%) into a suggested order size from the stop distance, so a single trade never risks more than you set. Leverage is an advisory cap, scaled <em>down</em> for higher-volatility coins.</P>
+        <H>The radar — always something to watch</H>
+        <P>Most coins in play never clear every filter, so alongside the posted signals the <B>Radar</B> shows the top <B>long- and short-leaning</B> candidates the scanner is weighing — each tagged <B>✓ Signal</B> or <B>Watching</B> with the exact reason it hasn’t graduated (R:R too tight, market ranging, sentiment opposed…). It’s candidates under evaluation, not calls.</P>
+        <H>Set up &amp; track your own trade</H>
+        <P>Open the <B>trade ticket</B> three ways: the <B>📍 Set up a trade</B> button (search <em>any</em> coin and it seeds sensible levels around the live price), <B>tap any radar candidate</B>, or click a posted signal (or <B>Edit</B> a tracked one). Then choose LONG/SHORT and set your own <B>entry zone, leverage, stop-loss and TP1/2/3</B>. Everything recomputes live — reward:risk, the risk-based <B>position size</B>, margin, the isolated <B>liquidation estimate</B> and the <B>$ outcome at each target</B> — and an invalid plan (stop/targets on the wrong side) is blocked with the reason. <B>Track</B> hands the plan to the engine, which monitors your levels tick-by-tick and <B>alerts you on a hit</B>; manage, re-configure or close them under <B>My setups</B>. Tracking is advisory — it watches and notifies, it does <em>not</em> place the order — so it works in either workspace, with or without a wallet.</P>
+        <H>Forward-test track record</H>
+        <P>Every posted signal is tracked tick-by-tick against live price (a scale-out-thirds model with a fixed stop) — so the channel reports its <B>own</B> real-time accuracy: win rate, average R, TP1 hit-rate and total R across closed signals. This <B>is</B> the paper-trading verification step: prove the channel’s edge on real market conditions before acting on it with capital.</P>
+        <P>The channel needs a free <C>GEMINI_API_KEY</C> (every signal is AI-validated). Without it the channel idles and prompts for the key. Tune it with <C>SIGNALS_MIN_RR</C>, <C>SIGNALS_MIN_CONFIDENCE</C>, <C>SIGNALS_SCAN_MS</C> and <C>SIGNALS_MAX_ACTIVE</C>; turn it off with <C>SIGNALS_DISABLED=true</C>. Signals are <B>probabilities, not guarantees</B> — not financial advice.</P>
+        <P><B>If you see “⏳ AI rate-limited”:</B> your Gemini key hit its quota (the free tier is easy to exhaust — each scan validates several coins plus their news). The channel <B>pauses AI calls</B> for a short cooldown and resumes automatically, so no new signals post in the meantime and the radar shows candidates without an AI verdict. The <B>radar</B> and your own <B>tracked setups</B> keep working — they need no AI. To post signals continuously, use a key with available quota (a paid Gemini tier, or wait for the free quota to reset).</P>
+      </>
+    ),
+  },
+  {
+    id: 'alerts',
+    title: 'Price Alerts',
+    body: (
+      <>
+        <P>In the <B>💱 Trade</B> channel's <B>Alert</B> tab, set a price alert on the selected coin and get notified the moment it moves: <B>cross above</B> a price, <B>drop below</B> a price, or <B>move ±%</B> from where it is now (a volatility alert). The engine checks every armed alert each tick against the live price; manage them all under the channel's activity (This coin / All).</P>
+        <P>Alerts are <B>one-shot</B> — they fire once, then sit as “triggered” until you <B>re-arm</B> (re-arming uses the current price as the new basis) or delete them; <B>pause/resume</B> any time. Each trigger shows an in-app toast and, if you've configured <C>ALERT_TELEGRAM_*</C> or <C>ALERT_WEBHOOK_URL</C>, pushes there too. No Gemini key needed.</P>
+      </>
+    ),
+  },
+  {
+    id: 'earn',
+    title: 'Earn',
+    body: (
+      <>
+        <P>Open <B>💼 Portfolio → 🌱 Earn</B> to see where to park <B>idle stablecoins</B> for yield. It pulls live rates from <B>DefiLlama</B> (free, no key) and shows a safety-filtered shortlist — <B>single-asset stablecoin</B> pools (no impermanent-loss pairs) with <B>≥ $5M TVL</B> on the supported chains — ranked by APY, with TVL and a base/reward split. Type an amount and each row projects the <B>$/yr</B>.</P>
+        <P>It's informational: depositing is done on the protocol directly (tap a row to open it on DefiLlama). High stablecoin APYs usually carry extra risk — check the TVL and protocol. DeFi has smart-contract risk; nothing here is financial advice. In-app auto-deposit is a gated follow-up.</P>
+      </>
+    ),
+  },
+  {
+    id: 'limit-orders',
+    title: 'Limit Orders',
+    body: (
+      <>
+        <P>In the <B>💱 Trade</B> channel's <B>Limit</B> tab, set conditional spot orders on the selected coin: <B>buy the dip</B> (fills when the price drops to your target) or <B>sell the rip</B> (fills when it rises to your target). The engine watches each open order against the live price every tick and fills it at <B>your price or better</B>, with a fee — then toasts you (and Telegram/webhook if configured).</P>
+        <P>Pick a coin, a side, a USD amount and a trigger; a buy target must be <em>below</em> the current price and a sell target <em>above</em>, so nothing fills the instant you place it. Fills are <B>paper</B> (no funds move) — live auto-execution through the swap router is a gated follow-up. Cancel an open order or dismiss a settled one any time.</P>
+      </>
+    ),
+  },
+  {
+    id: 'perps',
+    title: 'Perps (paper)',
+    body: (
+      <>
+        <P>In the <B>💱 Trade</B> channel's <B>Perp</B> tab, open leveraged <B>long / short</B> perpetual futures on any coin — <B>paper</B> for now, so no funds move. Each position is marked every tick against <B>real Hyperliquid prices and funding rates</B> (a free, no-key public API; coins Hyperliquid doesn't list fall back to the CoinGecko spot price), with a live PnL/ROE, an isolated-margin <B>liquidation</B> estimate, and accruing funding + fees. Manage open positions under the channel's activity.</P>
+        <H>Opening + managing</H>
+        <P>Open a position three ways: the <B>Open a position</B> button (search any coin), the trade ticket's <B>📈 Open (paper)</B> action, or from a signal. You set the <B>leverage</B>, and the size comes from your position-sizing risk; an optional stop + take-profit close it automatically, alongside the hard <B>liquidation</B>. A position closes on <B>take-profit</B>, <B>stop</B>, <B>liquidation</B>, or when you <B>close at market</B>. Stats track your realized P&L and win rate.</P>
+        <P className="rounded-xl bg-amber-500/10 p-3 text-amber-200">Paper only. Leverage amplifies losses and a position can be fully <B>liquidated</B> — size responsibly. Live on-chain perps execution is intentionally disabled until it's verified on testnet.</P>
+      </>
+    ),
+  },
+  {
     id: 'portfolio',
     title: 'Portfolio & holdings',
     body: (
@@ -171,6 +252,7 @@ const SECTIONS: Section[] = [
         </ul>
         <H>Tracking P&L</H>
         <P>Each bot shows realized + unrealized P&L, win rate, fees, position value and native taken as profit — open one for its price chart with buy/sell markers and a plain-English activity log. The <B>Monthly P&L</B> panel is a persisted ledger (realized P&L, win rate, fees, native swept, volume, per-tolerance breakdown) that survives trade trimming and bot deletion.</P>
+        <P><B>CSV export:</B> the Trade history header has a <B>⤓ CSV</B> button that downloads the full ledger for the active workspace — date, side, asset, quantity, price, value, fee and realized P&L per fill — ready for a spreadsheet or your accountant.</P>
       </>
     ),
   },

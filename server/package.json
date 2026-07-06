@@ -11,10 +11,12 @@
     "start": "node scripts/launch.mjs",
     "verify:turnkey": "node --import tsx scripts/verify-turnkey.ts",
     "verify:coingecko": "node --import tsx scripts/verify-coingecko.ts",
+    "verify:hyperliquid": "node --import tsx scripts/verify-hyperliquid.ts",
     "test": "node --import tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@dfinity/agent": "^2.4.1",
+    "@msgpack/msgpack": "^3.1.3",
     "@dfinity/principal": "^2.4.1",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",

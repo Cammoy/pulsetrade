@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../store'
+import { useShallow } from 'zustand/react/shallow'
 import { fmtSign, fmtUsd, pnlColor } from '../format'
 import { reconcileMonthly } from '../monthly'
 import { RISKS } from '../stats'
@@ -11,7 +12,7 @@ const MONTH_LABEL = (key: string) => {
 }
 
 export default function MonthlyPnl() {
-  const { monthly, mode } = useStore()
+  const { monthly, mode } = useStore(useShallow((s) => ({ monthly: s.monthly, mode: s.mode })))
   const [open, setOpen] = useState(true)
   // Show only the active workspace's ledger (paper vs live never mix).
   const activeMonthly = mode === 'live' ? monthly.live : monthly.paper

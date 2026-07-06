@@ -17,14 +17,16 @@ describe('routing', () => {
     expect(parseHash('')).toEqual({ view: 'home', botId: null })
     expect(parseHash('#bots')).toEqual({ view: 'home', botId: null })
     expect(parseHash('#portfolio/withdraw')).toEqual({ view: 'portfolio', portfolioTab: 'withdraw', botId: null })
+    expect(parseHash('#portfolio/earn')).toEqual({ view: 'portfolio', portfolioTab: 'earn', botId: null })
     expect(parseHash('#portfolio')).toEqual({ view: 'portfolio', portfolioTab: undefined, botId: null })
     expect(parseHash('#bot/abc')).toEqual({ botId: 'abc' })
     expect(parseHash('#nonsense')).toEqual({}) // unknown → leave state untouched
   })
 
   test('round-trips every channel', () => {
-    for (const view of ['home', 'market', 'smart', 'copy', 'docs'] as const)
+    for (const view of ['home', 'market', 'smart', 'copy', 'signals', 'trade', 'docs'] as const)
       expect(parseHash(`#${hashForState({ ...base, view })}`).view).toBe(view)
     expect(parseHash(`#${hashForState({ ...base, view: 'portfolio', portfolioTab: 'staking' })}`)).toMatchObject({ view: 'portfolio', portfolioTab: 'staking' })
+    expect(parseHash(`#${hashForState({ ...base, view: 'portfolio', portfolioTab: 'earn' })}`)).toMatchObject({ view: 'portfolio', portfolioTab: 'earn' })
   })
 })

@@ -49,8 +49,13 @@ export default function MarketPanel() {
   }
   useEffect(() => {
     load()
-    const t = setInterval(load, 180_000)
-    return () => clearInterval(t)
+    // /api/market is the rate-limited CoinGecko path — don't poll while the tab is hidden
+    // (a background tab burns the budget for nothing); refresh on return to catch up.
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 180_000)
+    const onVis = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   if (err && !data)

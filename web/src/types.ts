@@ -360,6 +360,8 @@ export interface Bot {
   token: string
   strategy: string
   risk: 'conservative' | 'balanced' | 'aggressive'
+  /** Per-bot exit overrides for strategy/AI bots — replace the risk-tier TP/SL when set. */
+  overrides?: { takeProfitPct?: number; stopLossPct?: number }
   budgetUsd: number
   cashUsd: number
   status: 'running' | 'paused' | 'stopped' | 'scheduled'
@@ -674,4 +676,257 @@ export interface CoinHit {
   name: string
   thumb: string | null
   rank: number | null
+}
+
+// ── Advisory trading-signal channel ──────────────────────────────────────────
+export type SignalDirection = 'LONG' | 'SHORT'
+export type SignalStatus = 'active' | 'tp1' | 'tp2' | 'tp3' | 'stopped' | 'expired'
+
+export interface SignalTechnicals {
+  rsi: number
+  emaFast: number
+  emaSlow: number
+  sma: number
+  trend: 'up' | 'down' | 'range'
+  change24hPct: number
+  volatilityPct: number
+}
+
+export interface TradeSignal {
+  id: string
+  asset: string
+  symbol: string
+  cgId: string
+  direction: SignalDirection
+  entryLow: number
+  entryHigh: number
+  entryMid: number
+  leverageMin: number
+  leverageMax: number
+  tp1: number
+  tp2: number
+  tp3: number
+  stopLoss: number
+  confidence: number // 0..100
+  riskReward: number
+  sentimentScore: number // −1..+1
+  rationale: string
+  technicals: SignalTechnicals
+  refPrice: number
+  status: SignalStatus
+  createdAt: number
+  expiresAt: number
+  hitTp1At?: number
+  hitTp2At?: number
+  hitTp3At?: number
+  closedAt?: number
+  closePrice?: number
+  realizedR?: number
+  disclaimer: string
+  source?: 'ai' | 'user'
+}
+
+export interface SignalStats {
+  closed: number
+  wins: number
+  losses: number
+  winRatePct: number | null
+  avgR: number | null
+  totalR: number
+  tp1HitRatePct: number | null
+  bestR: number | null
+  worstR: number | null
+  active: number
+}
+
+export interface RadarEntry {
+  symbol: string
+  cgId: string
+  name: string
+  bias: SignalDirection
+  price: number
+  change24hPct: number
+  rsi: number | null
+  triggers: string[]
+  status: 'signal' | 'watching'
+  reason: string
+}
+
+export interface SignalsPayload {
+  active: TradeSignal[]
+  history: TradeSignal[]
+  tracked: TradeSignal[]
+  radar: RadarEntry[]
+  stats: SignalStats
+  enabled: boolean
+  needsAi: boolean
+  /** Key is present but Gemini is in a quota cooldown (429) — AI validation is paused. */
+  aiThrottled?: boolean
+  scanMs?: number
+  generatedAt: number | null
+}
+
+// ── Price alerts ─────────────────────────────────────────────────────────────
+export type AlertKind = 'above' | 'below' | 'move'
+export type AlertStatus = 'armed' | 'triggered'
+
+export interface PriceAlert {
+  id: string
+  cg: string
+  symbol: string
+  name: string
+  kind: AlertKind
+  value: number
+  armedPrice: number
+  note?: string
+  enabled: boolean
+  status: AlertStatus
+  createdAt: number
+  triggeredAt?: number
+  triggeredPrice?: number
+}
+
+/** An OHLC candle (GET /api/ohlc/:cg). */
+export interface Ohlc {
+  t: number
+  o: number
+  h: number
+  l: number
+  c: number
+}
+
+// ── Limit (conditional) orders ───────────────────────────────────────────────
+export type OrderSide = 'buy' | 'sell'
+export type OrderStatus = 'open' | 'filled' | 'cancelled' | 'expired'
+
+export interface LimitOrder {
+  id: string
+  cg: string
+  symbol: string
+  name: string
+  side: OrderSide
+  amountUsd: number
+  triggerPrice: number
+  refPrice: number
+  status: OrderStatus
+  createdAt: number
+  expiresAt: number
+  filledAt?: number
+  fillPrice?: number
+  filledQty?: number
+  proceedsUsd?: number
+  mode: 'paper' | 'live'
+  note?: string
+}
+
+/** Body for POST /api/limit-orders. */
+export interface LimitOrderDraft {
+  cg: string
+  symbol: string
+  name?: string
+  side: OrderSide
+  amountUsd: number
+  triggerPrice: number
+}
+
+// ── Earn (stablecoin yields) ─────────────────────────────────────────────────
+export interface YieldPool {
+  project: string
+  chain: string
+  symbol: string
+  apy: number
+  apyBase: number | null
+  apyReward: number | null
+  tvlUsd: number
+  poolId: string
+}
+
+export interface EarnPayload {
+  pools: YieldPool[]
+  at: number | null
+  error: string | null
+}
+
+// ── Perpetual futures (paper) ────────────────────────────────────────────────
+export type PerpSide = 'long' | 'short'
+export type PerpStatus = 'open' | 'closed'
+export type PerpCloseReason = 'tp' | 'stop' | 'liquidated' | 'manual'
+
+export interface PerpPosition {
+  id: string
+  symbol: string
+  cgId: string
+  side: PerpSide
+  leverage: number
+  marginUsd: number
+  notionalUsd: number
+  entryPrice: number
+  sizeCoin: number
+  liqPrice: number
+  takeProfit?: number
+  stopLoss?: number
+  status: PerpStatus
+  closeReason?: PerpCloseReason
+  openedAt: number
+  closedAt?: number
+  closePrice?: number
+  realizedPnlUsd?: number
+  fundingPaidUsd: number
+  feesUsd: number
+  reason?: string
+  source: 'manual' | 'signal'
+  mode: 'paper' | 'live'
+  // server-computed live fields
+  markPrice: number
+  unrealizedPnlUsd: number
+  roePct: number
+}
+
+export interface PerpStats {
+  open: number
+  closed: number
+  wins: number
+  losses: number
+  winRatePct: number | null
+  realizedPnlUsd: number
+  openMarginUsd: number
+}
+
+export interface PerpsPayload {
+  open: PerpPosition[]
+  closed: PerpPosition[]
+  stats: PerpStats
+  maxLeverage: number
+  liveEnabled: boolean
+}
+
+/** Body for POST /api/perps. */
+export interface PerpDraft {
+  symbol: string
+  cgId: string
+  side: PerpSide
+  leverage: number
+  marginUsd: number
+  stopLoss?: number
+  takeProfit?: number
+  reason?: string
+}
+
+/** Body for POST /api/signals/track. */
+export interface TrackedRequest {
+  symbol: string
+  cgId: string
+  direction: SignalDirection
+  entryLow: number
+  entryHigh: number
+  stopLoss: number
+  tp1: number
+  tp2?: number
+  tp3?: number
+  leverageMin?: number
+  leverageMax?: number
+  refPrice?: number
+  confidence?: number
+  sentimentScore?: number
+  rationale?: string
 }

@@ -11,7 +11,7 @@ export default function DonutCard({ title, segments, total }: { title: string; s
       <h3 className="text-sm font-bold text-white">{title}</h3>
       <div className="mt-3 flex items-center gap-5">
         <div className="relative h-40 w-40 shrink-0">
-          <Donut segments={segments} />
+          <Donut segments={segments} label={`${title} — allocation breakdown`} />
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <span className="text-[10px] uppercase tracking-wide text-slate-500">Total</span>
             <span className="text-base font-bold tabular-nums text-white">{fmtUsd(total)}</span>

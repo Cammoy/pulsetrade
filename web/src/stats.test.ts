@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { aggregateStats, botsForMode } from './stats'
+import { aggregateStats, botsForMode, sortBotsForGrid } from './stats'
 import type { Bot } from './types'
 
 describe('botsForMode (workspace scoping)', () => {
@@ -62,5 +62,34 @@ describe('aggregateStats (Overview)', () => {
     expect(aggregateStats([bot({ wins: 0, losses: 0 })]).winRate).toBeNull()
     expect(aggregateStats([bot({ wins: 0, losses: 2 })]).winRate).toBe(0)
     expect(aggregateStats([bot({ wins: 2, losses: 0 })]).winRate).toBe(100)
+  })
+})
+
+describe('sortBotsForGrid (dashboard order)', () => {
+  // Minimal stub — only the fields the sorter reads.
+  const b = (o: Partial<{ id: string; status: string; totalPnlUsd: number; token: string; name: string; createdAt: number }>) =>
+    ({ id: o.id ?? 'x', status: o.status ?? 'running', totalPnlUsd: o.totalPnlUsd ?? 0, token: o.token ?? '', name: o.name ?? '', createdAt: o.createdAt ?? 0 }) as Parameters<typeof sortBotsForGrid>[0][number]
+
+  test('running bots always lead, regardless of the sort key', () => {
+    const bots = [b({ id: 'paused', status: 'paused', totalPnlUsd: 999 }), b({ id: 'run', status: 'running', totalPnlUsd: -5 })]
+    for (const key of ['recent', 'pnl', 'name'] as const) {
+      expect(sortBotsForGrid(bots, key)[0].id).toBe('run')
+    }
+  })
+
+  test("'pnl' orders running bots by P&L desc", () => {
+    const bots = [b({ id: 'lo', totalPnlUsd: 1 }), b({ id: 'hi', totalPnlUsd: 100 }), b({ id: 'mid', totalPnlUsd: 50 })]
+    expect(sortBotsForGrid(bots, 'pnl').map((x) => x.id)).toEqual(['hi', 'mid', 'lo'])
+  })
+
+  test("'name' orders A→Z by token (falling back to name)", () => {
+    const bots = [b({ id: '1', token: 'SOL' }), b({ id: '2', token: 'ARB' }), b({ id: '3', token: '', name: 'BTC bot' })]
+    expect(sortBotsForGrid(bots, 'name').map((x) => x.token || x.name)).toEqual(['ARB', 'BTC bot', 'SOL'])
+  })
+
+  test("'recent' orders newest first; the input array is not mutated", () => {
+    const bots = [b({ id: 'old', createdAt: 1 }), b({ id: 'new', createdAt: 3 }), b({ id: 'mid', createdAt: 2 })]
+    expect(sortBotsForGrid(bots, 'recent').map((x) => x.id)).toEqual(['new', 'mid', 'old'])
+    expect(bots.map((x) => x.id)).toEqual(['old', 'new', 'mid']) // pure — original untouched
   })
 })

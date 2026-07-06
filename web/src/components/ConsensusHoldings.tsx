@@ -20,17 +20,18 @@ const LIMIT = 12 // default to the top N, with a "show all" toggle for the long 
  * sprawling across a card grid: each row is the token, a conviction meter, its combined
  * value, who holds it, and compact research links.
  */
-export default function ConsensusHoldings() {
+export default function ConsensusHoldings({ refreshKey = 0 }: { refreshKey?: number }) {
   const [data, setData] = useState<Payload | null>(null)
   const [open, setOpen] = useState(true)
   const [all, setAll] = useState(false)
 
+  // Re-fetches when the parent's "↻ Refresh" bumps refreshKey (and on mount).
   useEffect(() => {
     fetch('/api/smart-money/consensus-holdings')
       .then((r) => r.json())
       .then(setData)
       .catch(() => {})
-  }, [])
+  }, [refreshKey])
 
   if (!data || data.needsKey || data.holdings.length === 0) return null
 

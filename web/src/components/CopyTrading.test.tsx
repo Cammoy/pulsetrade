@@ -20,11 +20,11 @@ const row = (over: Partial<LeaderboardRow>): LeaderboardRow => ({
 })
 
 const json = (b: unknown) => new Response(JSON.stringify(b), { headers: { 'content-type': 'application/json' } })
-const board = (rows: LeaderboardRow[], needsKey = false, discover?: { traders: DiscoveredTrader[]; discovering: boolean; coverageLimited?: boolean }) => {
+const board = (rows: LeaderboardRow[], needsKey = false, discover?: { traders: DiscoveredTrader[]; discovering: boolean; coverageLimited?: boolean }, pricingDegraded = false) => {
   globalThis.fetch = vi.fn(async (url: unknown) =>
     String(url).includes('/discover')
       ? json(discover ?? { traders: [], discovering: false })
-      : json({ rows, needsKey, totalWallets: rows.length, caveat: 'flow is not verified PnL' })) as typeof fetch
+      : json({ rows, needsKey, totalWallets: rows.length, caveat: 'flow is not verified PnL', pricingDegraded })) as typeof fetch
 }
 
 describe('CopyTrading', () => {
@@ -97,8 +97,8 @@ describe('CopyTrading', () => {
     await waitFor(() => expect(document.body).toHaveTextContent(/Wallet tracking needs an Etherscan API key/i))
   })
 
-  test('leaderboard surfaces a pricing-degraded hint when no row has realized-P&L', async () => {
-    board([row({ basis: 'flow', realizedPnlUsd: null }), row({ address: '0x' + 'e'.repeat(40), label: 'X', basis: 'flow', realizedPnlUsd: null })])
+  test('leaderboard surfaces a pricing-degraded hint when the server flags it', async () => {
+    board([row({ basis: 'flow', realizedPnlUsd: null }), row({ address: '0x' + 'e'.repeat(40), label: 'X', basis: 'flow', realizedPnlUsd: null })], false, undefined, true)
     render(<CopyTrading />)
     await waitFor(() => expect(document.body).toHaveTextContent(/Realized-P&L scoring is temporarily degraded/i))
     expect(document.body).toHaveTextContent(/COINGECKO_API_KEY/)

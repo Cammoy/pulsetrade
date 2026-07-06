@@ -5,7 +5,7 @@ import { useWatchlist } from '../useWatchlist'
 import { useNewPools } from '../useNewPools'
 import { pnlColor, fmtCompactUsd as big } from '../format'
 import { iconUrl } from '../icon'
-import type { MarketCoin, MarketOverview, SafePool } from '../types'
+import type { CoinHit, MarketCoin, MarketOverview, SafePool } from '../types'
 import Sparkline from './Sparkline'
 import NetworkSelect from './NetworkSelect'
 
@@ -61,8 +61,8 @@ const stubCoin = (s: { id: string; symbol: string; name: string }): MarketCoin =
 })
 
 export default function MarketDeck({ data }: { data: MarketOverview }) {
-  const { createBot, notify, setView, selectBot, refresh, meta } = useStore(
-    useShallow((s) => ({ createBot: s.createBot, notify: s.notify, setView: s.setView, selectBot: s.selectBot, refresh: s.refresh, meta: s.meta })),
+  const { createBot, notify, setView, selectBot, refresh, meta, openTradeCoin } = useStore(
+    useShallow((s) => ({ createBot: s.createBot, notify: s.notify, setView: s.setView, selectBot: s.selectBot, refresh: s.refresh, meta: s.meta, openTradeCoin: s.openTradeCoin })),
   )
   const wl = useWatchlist()
   // Keep a ref so the save callback is STABLE (doesn't change identity when the
@@ -73,6 +73,9 @@ export default function MarketDeck({ data }: { data: MarketOverview }) {
   const [active, setActive] = useState(0)
   const [edges, setEdges] = useState({ left: false, right: true })
   const [launching, setLaunching] = useState('')
+  // Live price for SAVED coins that fell out of the top-250 payload (so the watchlist —
+  // the highest-intent lane — doesn't freeze at "No live price"). id → price | null(tried).
+  const [hydrated, setHydrated] = useState<Record<string, number | null>>({})
 
   // id → coin across the wide pull AND trending (trending may carry coins not in the 250).
   const byId = useMemo(() => {
@@ -83,6 +86,29 @@ export default function MarketDeck({ data }: { data: MarketOverview }) {
   }, [data])
 
   const pick = useCallback((ids: string[]) => ids.map((id) => byId.get(id)).filter(Boolean) as MarketCoin[], [byId])
+
+  // Hydrate prices for saved coins outside the top-250 — one /api/coin lookup each, once.
+  const missingIds = useMemo(() => wl.items.filter((s) => !byId.has(s.id)).map((s) => s.id), [wl.items, byId])
+  useEffect(() => {
+    const todo = missingIds.filter((id) => hydrated[id] === undefined)
+    if (todo.length === 0) return
+    let alive = true
+    ;(async () => {
+      const entries = await Promise.all(
+        todo.map(async (id) => {
+          try {
+            const m = await fetch(`/api/coin/${encodeURIComponent(id)}`).then((r) => r.json())
+            return [id, Number.isFinite(Number(m?.priceUsd)) ? Number(m.priceUsd) : null] as const
+          } catch {
+            return [id, null] as const
+          }
+        }),
+      )
+      if (alive) setHydrated((h) => { const n = { ...h }; for (const [id, p] of entries) n[id] = p; return n })
+    })()
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missingIds])
 
   // New(DEX) pools come from a separate GeckoTerminal+GoPlus screen, but it's
   // cached 3min server-side so one fetch on mount is cheap — load it eagerly so
@@ -97,7 +123,16 @@ export default function MarketDeck({ data }: { data: MarketOverview }) {
     [meta],
   )
 
-  const watchCoins = useMemo(() => wl.items.map((s) => byId.get(s.id) ?? stubCoin(s)), [wl.items, byId])
+  const watchCoins = useMemo(
+    () =>
+      wl.items.map((s) => {
+        const live = byId.get(s.id)
+        if (live) return live
+        const px = hydrated[s.id]
+        return px != null ? { ...stubCoin(s), priceUsd: px } : stubCoin(s)
+      }),
+    [wl.items, byId, hydrated],
+  )
 
   const lanes: LaneDef[] = useMemo(
     () => [
@@ -172,6 +207,9 @@ export default function MarketDeck({ data }: { data: MarketOverview }) {
   }
 
   // ── actions (stable identities so memoised cards don't re-render) ──
+  // Open the coin in the Trade terminal (chart + perp/limit/alert). Works even for coins
+  // without a live top-250 price — the terminal fetches its own /api/coin + /api/ohlc.
+  const openTrade = useCallback((c: MarketCoin) => openTradeCoin({ symbol: c.symbol, name: c.name, cg: c.id }), [openTradeCoin])
   const trade = useCallback(async (c: MarketCoin) => {
     setLaunching(c.id)
     const out = await createBot({ network: 'market', token: c.symbol, cg: c.id, name: `${c.symbol} · Market`, strategy: 'adaptive', risk: 'balanced', budgetUsd: 200, sweepTo: 'native' })
@@ -210,7 +248,10 @@ export default function MarketDeck({ data }: { data: MarketOverview }) {
   const laneTitles = [...lanes.map((l) => l.title), 'New (DEX)'] // dot-rail labels (+ New DEX)
 
   return (
-    <div className="relative">
+    <div>
+      {/* Search ANY coin (not just what's in a lane) and open it in the Trade terminal. */}
+      <CoinSearch onPick={(h) => openTradeCoin({ symbol: h.symbol, name: h.name, cg: h.id })} />
+      <div className="relative">
       {/* edge chevrons (desktop) */}
       {edges.left && (
         <button onClick={() => page(-1)} aria-label="Previous lanes" className="absolute -left-2 top-1/2 z-20 hidden -translate-y-1/2 rounded-full border border-white/10 bg-[var(--surface-card)] dark:bg-slate-900/80 p-2 text-slate-700 shadow-lg backdrop-blur transition hover:bg-[var(--surface-hover)] dark:text-slate-200 dark:hover:bg-slate-800 lg:block">
@@ -237,7 +278,7 @@ export default function MarketDeck({ data }: { data: MarketOverview }) {
         style={{ scrollPaddingLeft: 8, touchAction: 'pan-x' }}
       >
         {lanes.map((lane) => (
-          <Lane key={lane.key} lane={lane} has={wl.has} launching={launching} onTrade={trade} onSave={onSave} notify={notify} />
+          <Lane key={lane.key} lane={lane} has={wl.has} launching={launching} onTrade={trade} onOpenTrade={openTrade} onSave={onSave} notify={notify} />
         ))}
         <NewPoolsLane pools={pools} loading={poolsLoading} error={poolsError} launching={launching} onSnipe={snipe} active network={poolNet} onNetwork={setPoolNet} networks={poolNetworks} />
       </div>
@@ -254,18 +295,68 @@ export default function MarketDeck({ data }: { data: MarketOverview }) {
           />
         ))}
       </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Coin search — find any coin and open it in the Trade terminal ─────────────
+function CoinSearch({ onPick }: { onPick: (h: CoinHit) => void }) {
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState<CoinHit[]>([])
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (q.trim().length < 2) {
+      setResults([])
+      return
+    }
+    setBusy(true)
+    const t = setTimeout(async () => {
+      try {
+        const j = await fetch(`/api/coins/search?q=${encodeURIComponent(q.trim())}`).then((r) => r.json())
+        setResults(Array.isArray(j.coins) ? j.coins : [])
+      } catch {
+        setResults([])
+      } finally {
+        setBusy(false)
+      }
+    }, 250)
+    return () => clearTimeout(t)
+  }, [q])
+  return (
+    <div className="relative mb-3 max-w-sm">
+      <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 focus-within:border-indigo-400/60">
+        <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search any coin to trade…" aria-label="Search any coin" className="w-full bg-transparent text-[13px] text-slate-100 outline-none placeholder:text-slate-600" />
+      </div>
+      {q.trim().length >= 2 && (
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-64 w-72 overflow-y-auto rounded-lg border border-white/10 bg-[var(--menu)] p-1 shadow-2xl">
+          {results.length === 0 ? (
+            <div className="px-2 py-2 text-[12px] text-slate-500">{busy ? 'Searching…' : 'No coins match'}</div>
+          ) : (
+            results.map((c) => (
+              <button key={c.id} onClick={() => { onPick(c); setQ(''); setResults([]) }} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/[0.06]">
+                {c.thumb ? <img src={c.thumb} alt="" className="h-4 w-4 rounded-full" /> : <span className="h-4 w-4 rounded-full bg-white/[0.06]" />}
+                <span className="text-[12px] font-semibold text-slate-100">{c.symbol}</span>
+                <span className="truncate text-[11px] text-slate-500">{c.name}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Lane ───────────────────────────────────────────────────────────────────
 const Lane = memo(function Lane({
-  lane, has, launching, onTrade, onSave, notify,
+  lane, has, launching, onTrade, onOpenTrade, onSave, notify,
 }: {
   lane: LaneDef
   has: (id: string) => boolean
   launching: string
   onTrade: (c: MarketCoin) => void
+  onOpenTrade: (c: MarketCoin) => void
   onSave: (c: MarketCoin) => boolean
   notify: (m: string, t?: 'error' | 'success' | 'info') => void
 }) {
@@ -293,7 +384,7 @@ const Lane = memo(function Lane({
             <div className="flex h-full items-center justify-center px-3 text-center text-[11px] leading-relaxed text-slate-600">{lane.emptyText}</div>
           ) : (
             lane.coins.map((c, i) => (
-              <CoinCard key={`${lane.key}:${c.id}`} coin={c} laneKey={lane.key} accent={lane.accent} index={i} saved={has(c.id)} launching={launching === c.id} onTrade={onTrade} onSave={onSave} notify={notify} />
+              <CoinCard key={`${lane.key}:${c.id}`} coin={c} laneKey={lane.key} accent={lane.accent} index={i} saved={has(c.id)} launching={launching === c.id} onTrade={onTrade} onOpenTrade={onOpenTrade} onSave={onSave} notify={notify} />
             ))
           )}
         </div>
@@ -314,7 +405,7 @@ function secondary(coin: MarketCoin, laneKey: string): { label: string; value: s
 }
 
 const CoinCard = memo(function CoinCard({
-  coin, laneKey, accent, index, saved, launching, onTrade, onSave, notify,
+  coin, laneKey, accent, index, saved, launching, onTrade, onOpenTrade, onSave, notify,
 }: {
   coin: MarketCoin
   laneKey: string
@@ -323,6 +414,7 @@ const CoinCard = memo(function CoinCard({
   saved: boolean
   launching: boolean
   onTrade: (c: MarketCoin) => void
+  onOpenTrade: (c: MarketCoin) => void
   onSave: (c: MarketCoin) => boolean
   notify: (m: string, t?: 'error' | 'success' | 'info') => void
 }) {
@@ -386,11 +478,12 @@ const CoinCard = memo(function CoinCard({
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            {/* No live price ⇒ unverified liquidity (e.g. a saved coin that fell out of
-                the top-250). Don't offer a one-click trade on a coin we can't confirm. */}
-            <button onClick={() => onTrade(coin)} disabled={launching || coin.priceUsd === null} title={coin.priceUsd === null ? 'No live price — liquidity unverified' : undefined} className="btn-primary flex-1 !py-1.5 text-[11px]">
-              {launching ? 'Launching…' : coin.priceUsd === null ? 'No live price' : '🌤️ Trade'}
-            </button>
+            {/* Primary: open the coin in the Trade terminal (chart + perp/limit/alert). Works
+                even with no top-250 price — the terminal fetches its own. */}
+            <button onClick={() => onOpenTrade(coin)} title={`Open ${coin.symbol} in the Trade terminal`} className="btn-primary flex-1 !py-1.5 text-[11px]">📊 Trade</button>
+            {/* Secondary: one-click All-Weather bot. Gated on a live price — don't launch a
+                bot on a coin whose liquidity we can't confirm (e.g. fell out of the top-250). */}
+            <button onClick={() => onTrade(coin)} disabled={launching || coin.priceUsd === null} title={coin.priceUsd === null ? 'No live price — liquidity unverified' : 'Launch a one-click All-Weather bot'} className="btn-ghost !px-2 !py-1.5 text-[11px]">{launching ? '…' : '🌤️'}</button>
             <a href={`https://www.coingecko.com/en/coins/${coin.id}`} target="_blank" rel="noreferrer" title="Open on CoinGecko" className="btn-ghost !px-2 !py-1.5 text-[11px]">↗</a>
           </div>
         </div>

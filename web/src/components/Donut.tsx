@@ -11,6 +11,7 @@ export default function Donut({
   className = 'h-full w-full -rotate-90',
   linecap = 'round',
   gap = 2,
+  label = 'Allocation breakdown',
 }: {
   segments: { color: string; value: number }[]
   size?: number
@@ -18,13 +19,15 @@ export default function Donut({
   className?: string
   linecap?: 'round' | 'butt'
   gap?: number
+  /** Accessible name for the chart (screen readers) — the legend carries the detail. */
+  label?: string
 }) {
   const total = segments.reduce((s, x) => s + x.value, 0)
   const r = (size - thickness) / 2
   const circ = 2 * Math.PI * r
   let acc = 0
   return (
-    <svg viewBox={`0 0 ${size} ${size}`} className={className}>
+    <svg viewBox={`0 0 ${size} ${size}`} className={className} role="img" aria-label={label}>
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(100,116,139,0.18)" strokeWidth={thickness} />
       {total > 0 &&
         segments

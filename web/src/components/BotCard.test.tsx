@@ -60,4 +60,22 @@ describe('BotCard — paused is obvious + stop blocks the UI', () => {
     render(<BotCard bot={makeBot()} />)
     expect(screen.getByLabelText('Pause')).toBeDisabled()
   })
+
+  test('renders an equity sparkline only when there are ≥2 history points', () => {
+    // Baseline (no history) → some SVGs (chevron, play/pause icon) but no sparkline.
+    const { container: empty } = render(<BotCard bot={makeBot({ equityHistory: [] })} />)
+    const emptyCount = empty.querySelectorAll('svg').length
+    // ≥2 points → exactly one extra SVG (the Sparkline).
+    const { container: filled } = render(<BotCard bot={makeBot({ equityHistory: [{ t: 1, v: 100 }, { t: 2, v: 110 }, { t: 3, v: 130 }] })} />)
+    expect(filled.querySelectorAll('svg').length).toBe(emptyCount + 1)
+  })
+
+  test('the card is keyboard-operable — focusable and opens on Enter', async () => {
+    render(<BotCard bot={makeBot()} />)
+    const card = screen.getByRole('button', { name: /Open cbBTC details/ })
+    expect(card).toHaveAttribute('tabindex', '0')
+    card.focus()
+    await userEvent.keyboard('{Enter}')
+    expect(selectBot).toHaveBeenCalledWith('b1')
+  })
 })
