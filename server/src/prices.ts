@@ -113,6 +113,30 @@ export async function getCandles(id: string, days = 30): Promise<{ t: number; c:
   return hit?.closes ?? []
 }
 
+// ── OHLC candles (for candlestick charting) ─────────────────────────────────
+// CoinGecko's /ohlc endpoint returns true open/high/low/close per period (granularity is
+// auto-chosen by the `days` window). Cached 5 min like getCandles, and routed through the
+// shared cgFetch so it cooperates with the 429 backoff. Returns [] on failure (stale if any).
+export interface Ohlc { t: number; o: number; h: number; l: number; c: number }
+const ohlcCache = new Map<string, { at: number; candles: Ohlc[] }>()
+
+export async function getOhlc(id: string, days = 30): Promise<Ohlc[]> {
+  const key = `${id}:${days}`
+  const hit = ohlcCache.get(key)
+  if (hit && Date.now() - hit.at < 300_000) return hit.candles
+  const data = await cgFetch(`${CG}/coins/${id}/ohlc?vs_currency=usd&days=${days}`)
+  if (Array.isArray(data) && data.length) {
+    const candles: Ohlc[] = data
+      .filter((r: unknown): r is number[] => Array.isArray(r) && r.length >= 5 && r.slice(0, 5).every((n) => Number.isFinite(n)))
+      .map(([t, o, h, l, c]) => ({ t, o, h, l, c }))
+    if (candles.length) {
+      ohlcCache.set(key, { at: Date.now(), candles })
+      return candles
+    }
+  }
+  return hit?.candles ?? []
+}
+
 // ── Historical pricing (for cost-basis realized-PnL reconstruction) ──────────
 // A ~1y daily price series per coin, cached 6h (closed candles barely move). Reuses getCandles
 // (CoinGecko market_chart + its 429 backoff + stale-on-fail), so cost-basis valuation shares the

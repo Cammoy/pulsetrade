@@ -9,6 +9,8 @@ import HoldingsTracker from './HoldingsTracker'
 import AddressBook from './AddressBook'
 import DonutCard from './DonutCard'
 import StakingSection from './StakingSection'
+import EarnSection from './EarnSection'
+import ErrorBoundary from './ErrorBoundary'
 
 const short = (a: string) => (a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a)
 
@@ -68,6 +70,17 @@ export default function Portfolio() {
     for (const a of seed) if (!addrs.some((x) => x.toLowerCase() === a.toLowerCase())) add(a)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, meta?.live?.botWallet, meta?.live?.evm?.wallet, meta?.live?.solana?.wallet])
+
+  // Live-refresh on-chain balances every 30s while the Wallet tab is open and visible —
+  // otherwise the value silently freezes at first read for the whole session.
+  useEffect(() => {
+    if (tab !== 'wallet' || addrs.length === 0) return
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') addrs.forEach(load)
+    }, 30_000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, addrs])
 
   // Merge every successfully-read address into one combined portfolio (so EVM +
   // Solana holdings show together; same asset on the same network is summed).
@@ -268,10 +281,12 @@ export default function Portfolio() {
     <div className="animate-in space-y-4">
       {/* Tabs — keep the Portfolio compact instead of one long scroll; isolating each
           section also means a hiccup in one can't take the others down. */}
-      <div className="flex items-center gap-1 seg-track p-1 text-sm">
-        {([['holdings', '📊 Holdings'], ['wallet', '🔗 Wallet'], ['staking', '🔒 Staking'], ['withdraw', '💸 Withdraw']] as const).map(([k, label]) => (
+      <div role="tablist" aria-label="Portfolio sections" className="flex items-center gap-1 seg-track p-1 text-sm">
+        {([['holdings', '📊 Holdings'], ['wallet', '🔗 Wallet'], ['staking', '🔒 Staking'], ['earn', '🌱 Earn'], ['withdraw', '💸 Withdraw']] as const).map(([k, label]) => (
           <button
             key={k}
+            role="tab"
+            aria-selected={tab === k}
             onClick={() => setTab(k)}
             className={`flex-1 cursor-pointer rounded-lg px-3 py-2 font-semibold transition-colors ${tab === k ? 'seg-active' : 'text-slate-400 hover:text-slate-200'}`}
           >
@@ -280,15 +295,23 @@ export default function Portfolio() {
         ))}
       </div>
 
-      {tab === 'holdings' && <HoldingsTracker />}
-      {tab === 'wallet' && <div className="space-y-4">{walletContent}</div>}
-      {tab === 'staking' && <StakingSection />}
-      {tab === 'withdraw' && (
-        <div className="space-y-4">
-          <WithdrawPanel />
-          <AddressBook />
-        </div>
-      )}
+      {/* One boundary per tab content — a render fault in one section degrades to a notice
+          instead of blanking the whole Portfolio; resetKey={tab} clears it on tab switch. */}
+      <ErrorBoundary
+        resetKey={tab}
+        fallback={<div className="glass p-6 text-center text-sm text-rose-300">This section hit an error. Switch tabs and back, or reload the app.</div>}
+      >
+        {tab === 'holdings' && <HoldingsTracker />}
+        {tab === 'wallet' && <div className="space-y-4">{walletContent}</div>}
+        {tab === 'staking' && <StakingSection />}
+        {tab === 'earn' && <EarnSection />}
+        {tab === 'withdraw' && (
+          <div className="space-y-4">
+            <WithdrawPanel />
+            <AddressBook />
+          </div>
+        )}
+      </ErrorBoundary>
     </div>
   )
 }

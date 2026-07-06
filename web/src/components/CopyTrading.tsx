@@ -53,6 +53,7 @@ export default function CopyTrading() {
   const [rows, setRows] = useState<LeaderboardRow[]>([])
   const [needsKey, setNeedsKey] = useState(false)
   const [caveat, setCaveat] = useState('')
+  const [pricingDegraded, setPricingDegraded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [setup, setSetup] = useState<{ open: boolean; wallet: SetupTarget }>({ open: false, wallet: null })
   const [detail, setDetail] = useState<string | null>(null)
@@ -66,6 +67,7 @@ export default function CopyTrading() {
       setRows(d.rows ?? [])
       setNeedsKey(!!d.needsKey)
       setCaveat(d.caveat ?? '')
+      setPricingDegraded(!!d.pricingDegraded)
     } catch {
       /* offline — leave whatever we have */
     }
@@ -120,7 +122,7 @@ export default function CopyTrading() {
 
       <Discover traders={disc.traders} discovering={disc.discovering} coverageLimited={disc.coverageLimited} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
 
-      <Leaderboard rows={rows} loading={loading} caveat={caveat} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
+      <Leaderboard rows={rows} loading={loading} caveat={caveat} degraded={pricingDegraded} onRefresh={loadBoard} onCopy={(w) => setSetup({ open: true, wallet: w })} onSelect={setDetail} />
 
       <Timeline bots={copyBots} />
 
@@ -263,15 +265,15 @@ const Spinner = ({ label }: { label: string }) => (
 )
 
 // ── Leaderboard ──────────────────────────────────────────────────────────────
-function Leaderboard({ rows, loading, caveat, onCopy, onSelect }: { rows: LeaderboardRow[]; loading: boolean; caveat: string; onCopy: (w: { address: string; label: string }) => void; onSelect: (address: string) => void }) {
-  // When no row could be priced (CoinGecko historical endpoint rate-limited), the board falls back
-  // to net-flow scoring — say so, and point at the fix instead of silently mislabelling.
-  const degraded = rows.length > 0 && !rows.some((r) => r.basis === 'realized-pnl')
+function Leaderboard({ rows, loading, caveat, degraded, onRefresh, onCopy, onSelect }: { rows: LeaderboardRow[]; loading: boolean; caveat: string; degraded: boolean; onRefresh: () => void; onCopy: (w: { address: string; label: string }) => void; onSelect: (address: string) => void }) {
+  // `degraded` is a SERVER signal now: pricing is genuinely rate-limited (wallets had
+  // round-trips but none could be valued historically) — not merely inferred from the
+  // absence of realized-P&L rows, which also happens with legitimately thin wallets.
   return (
     <Card
       title="🏆 Copy-worthiness leaderboard"
       sub={degraded ? 'Ranked by net flow — realized-P&L pricing is rate-limited right now' : 'Tracked wallets ranked by realized P&L (cost-basis) — a research start, not a guarantee'}
-      right={loading ? <Spinner label={rows.length ? 'Refreshing…' : 'Scoring wallets…'} /> : undefined}
+      right={loading ? <Spinner label={rows.length ? 'Refreshing…' : 'Scoring wallets…'} /> : <button onClick={onRefresh} className="btn-ghost !py-1 text-[11px]" aria-label="Refresh leaderboard">↻ Refresh</button>}
     >
       {degraded && (
         <div className="mb-2 rounded-lg bg-amber-500/10 px-3 py-1.5 text-[11px] leading-relaxed text-amber-200">

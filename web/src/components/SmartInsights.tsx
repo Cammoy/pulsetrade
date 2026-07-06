@@ -17,7 +17,7 @@ const firstName = (label: string) => label.split(/[(—·]/)[0].trim().split(' '
  * a "new coins" radar (what whales are buying, with research links), the
  * buying/selling board, and a cumulative-flow chart.
  */
-export default function SmartInsights() {
+export default function SmartInsights({ refreshKey = 0 }: { refreshKey?: number }) {
   const { createBot, notify, setView, mode } = useStore()
   const [data, setData] = useState<SmartIntelligence | null>(null)
   const [loading, setLoading] = useState(true)
@@ -34,9 +34,11 @@ export default function SmartInsights() {
     }
     setLoading(false)
   }
+  // Reloads when the parent's "↻ Refresh" bumps refreshKey (and on mount).
   useEffect(() => {
     load()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey])
 
   const trade = async (network: string, token: string) => {
     setLaunching(`${network}:${token}`)

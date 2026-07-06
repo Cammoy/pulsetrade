@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../store'
+import { useShallow } from 'zustand/react/shallow'
 import { fmtSign, fmtUsd, fmtPct, pnlColor, parseAmount } from '../format'
 import { useModal } from '../useModal'
 import NetworkSelect from './NetworkSelect'
@@ -13,14 +14,37 @@ const RISK_CLS: Record<string, string> = {
 
 /** Dashboard panel listing running/ended tournaments with live leaderboards. */
 export function TournamentPanel() {
-  const { tournaments, meta, mode, openTournament, selectBot, confirm } = useStore()
+  const { tournaments, meta, mode, openTournament, selectBot, confirm, refresh, notify } = useStore(
+    useShallow((s) => ({ tournaments: s.tournaments, meta: s.meta, mode: s.mode, openTournament: s.openTournament, selectBot: s.selectBot, confirm: s.confirm, refresh: s.refresh, notify: s.notify })),
+  )
   // Scope to the active workspace — a paper tournament never shows in the live view.
   const visible = tournaments.filter((t) => (t.mode ?? 'paper') === mode)
   if (visible.length === 0) return null
   const stratName = (id: string) => meta?.strategies.find((s) => s.id === id)?.name ?? id
 
-  const end = (id: string) => fetch(`/api/tournaments/${id}/end`, { method: 'POST' })
-  const remove = (id: string) => fetch(`/api/tournaments/${id}`, { method: 'DELETE' })
+  // End/delete mutate real bots — await the response, refresh, and surface failures.
+  // (Previously fire-and-forget: a 4xx/5xx or a down engine produced NO feedback and the
+  // panel only updated if a WS snapshot happened to arrive.)
+  const end = async (id: string) => {
+    try {
+      const r = await fetch(`/api/tournaments/${id}/end`, { method: 'POST' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      await refresh()
+      notify('Tournament ended — contestants liquidated', 'success')
+    } catch {
+      notify("Couldn't end the tournament — try again", 'error')
+    }
+  }
+  const remove = async (id: string) => {
+    try {
+      const r = await fetch(`/api/tournaments/${id}`, { method: 'DELETE' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      await refresh()
+      notify('Tournament deleted', 'success')
+    } catch {
+      notify("Couldn't delete the tournament — try again", 'error')
+    }
+  }
 
   return (
     <section className="space-y-3">
@@ -87,7 +111,7 @@ export function TournamentPanel() {
 const ALL_RISKS = ['conservative', 'balanced', 'aggressive'] as const
 
 export function TournamentModal() {
-  const { meta, openTournament, refresh } = useStore()
+  const { meta, openTournament, refresh } = useStore(useShallow((s) => ({ meta: s.meta, openTournament: s.openTournament, refresh: s.refresh })))
   const [network, setNetwork] = useState('base')
   const [token, setToken] = useState('')
   const [budget, setBudget] = useState('500')

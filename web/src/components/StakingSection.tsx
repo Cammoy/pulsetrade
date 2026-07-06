@@ -87,6 +87,16 @@ export default function StakingSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Re-read every 60s while viewing the charts (visible tab) so values don't freeze.
+  useEffect(() => {
+    if (!hasSaved || editing) return
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') void view()
+    }, 60_000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSaved, editing])
+
   const networkSegments = useMemo(() => (data ? data.byNetwork.map((n) => ({ label: n.name, value: n.usd, color: n.color })) : []), [data])
   const positions = useMemo(() => (data ? [...data.positions].sort((a, b) => b.usd - a.usd) : []), [data])
   const maxPos = positions[0]?.usd ?? 0
@@ -101,7 +111,10 @@ export default function StakingSection() {
             <p className="mt-0.5 text-[12px] text-slate-500">Read-only across chains — ICP neurons by ID, Solana stake auto-detected, plus liquid-staking tokens on Ethereum.</p>
           </div>
           {hasSaved && !editing && (
-            <button className="btn-ghost shrink-0 !px-2.5 !py-1 text-[12px]" onClick={() => setEditing(true)}>Edit sources</button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button className="btn-ghost !px-2.5 !py-1 text-[12px]" disabled={loading} onClick={() => void view()} aria-label="Refresh staking">{loading ? '…' : '↻ Refresh'}</button>
+              <button className="btn-ghost !px-2.5 !py-1 text-[12px]" onClick={() => setEditing(true)}>Edit sources</button>
+            </div>
           )}
         </div>
 

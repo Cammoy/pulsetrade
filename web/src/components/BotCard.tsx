@@ -1,8 +1,10 @@
 import { useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useStore } from '../store'
+import { useShallow } from 'zustand/react/shallow'
 import type { Bot, RiskReport } from '../types'
 import { fmtSign, fmtUsd, fmtPrice, pnlColor } from '../format'
 import CountUp from '../useCountUp'
+import Sparkline from './Sparkline'
 import { RiskBadge } from './RiskReport'
 
 export const STATUS: Record<Bot['status'], { label: string; cls: string; dot: string }> = {
@@ -61,7 +63,9 @@ function Cell({ label, value, valueCls }: { label: string; value: ReactNode; val
 }
 
 export default function BotCard({ bot, index = 0 }: { bot: Bot; index?: number }) {
-  const { meta, control, archive, remove, selectBot, confirm, pendingByBot } = useStore()
+  const { meta, control, archive, remove, selectBot, confirm, pendingByBot } = useStore(
+    useShallow((s) => ({ meta: s.meta, control: s.control, archive: s.archive, remove: s.remove, selectBot: s.selectBot, confirm: s.confirm, pendingByBot: s.pendingByBot })),
+  )
   const [expanded, setExpanded] = useState(false)
   const net = meta?.networks.find((n) => n.id === bot.network)
   const strat = meta?.strategies.find((s) => s.id === bot.strategy)
@@ -104,6 +108,12 @@ export default function BotCard({ bot, index = 0 }: { bot: Bot; index?: number }
       className={`glass glass-hover card-lift animate-in group relative min-w-0 overflow-hidden ${stopping ? 'cursor-default' : 'cursor-pointer'} ${paused ? 'ring-1 ring-amber-400/40' : ''}`}
       style={index ? { animationDelay: `${Math.min(index, 12) * 45}ms` } : undefined}
       onClick={() => { if (!stopping) selectBot(bot.id) }}
+      // Keyboard-openable: the card is a navigation target, so expose it as a button to AT
+      // and activate on Enter/Space (inner controls stopPropagation, so they still win).
+      role="button"
+      tabIndex={stopping ? -1 : 0}
+      aria-label={`Open ${bot.token || bot.name} details`}
+      onKeyDown={(e) => { if (!stopping && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selectBot(bot.id) } }}
       aria-busy={busy}
     >
       {/* Paused bots wear an unmistakable amber spine + ring (set above) so a stopped-trading
@@ -156,6 +166,12 @@ export default function BotCard({ bot, index = 0 }: { bot: Bot; index?: number }
             <div className="mt-2 truncate text-[12px] text-slate-500">
               {inPos ? 'In position' : 'Flat'} · {bot.priceUsd ? fmtPrice(bot.priceUsd) : '—'} · {since(bot.createdAt)} · <span className="capitalize">{bot.risk}</span>
             </div>
+            {/* Equity trend at a glance — green/red relative to the bot's starting equity. */}
+            {bot.equityHistory.length >= 2 && (
+              <div className="mt-2">
+                <Sparkline points={bot.equityHistory.map((p) => p.v)} width={140} height={26} baseline={bot.equityHistory[0]?.v} />
+              </div>
+            )}
           </div>
           <button
             onClick={stopProp(() => { if (!busy) control(bot.id, pausable ? 'pause' : 'resume') })}

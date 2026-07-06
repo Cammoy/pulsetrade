@@ -26,12 +26,14 @@ const VIEW_META = {
   market: { hash: 'market', topic: 'Live market regime, movers & signals across the majors' },
   smart: { hash: 'smart-money', topic: 'What tracked whales & smart-money wallets are buying and selling' },
   copy: { hash: 'copy-trade', topic: 'Rank copy-worthy wallets, then mirror their trades automatically' },
+  signals: { hash: 'signals', topic: 'AI-validated LONG/SHORT signals — entry, leverage, TP/SL & live accuracy' },
+  trade: { hash: 'trade', topic: 'One coin, one terminal — chart, perps, limit orders & alerts in one place' },
   docs: { hash: 'docs', topic: 'How everything works — strategies, sniper, swap, going live & safety' },
 } as const
 
 export default function ChannelHeader() {
-  const { view, bots, mode, openWizard } = useStore(
-    useShallow((s) => ({ view: s.view, bots: s.bots, mode: s.mode, openWizard: s.openWizard })),
+  const { view, bots, mode, openNewBot } = useStore(
+    useShallow((s) => ({ view: s.view, bots: s.bots, mode: s.mode, openNewBot: s.openNewBot })),
   )
   const vm = VIEW_META[view]
   // Scope the header's bot count + P&L to the active workspace (no paper/live mix).
@@ -64,7 +66,7 @@ export default function ChannelHeader() {
         <ThemeToggle />
         <ModeSwitch />
         <WalletButton />
-        <button className="btn-primary" onClick={() => openWizard(true)}>
+        <button className="btn-primary" onClick={() => openNewBot(true)}>
           + New Bot
         </button>
       </div>

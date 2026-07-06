@@ -1,14 +1,25 @@
 import { Component, type ReactNode } from 'react'
 
-export default class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+/**
+ * Catches render errors. By default shows a full-screen fallback (the app root). Pass a
+ * `fallback` to scope it (e.g. one tab/section degrades while the rest of the page lives),
+ * and a `resetKey` so the boundary clears its error when that key changes (e.g. the user
+ * switches to a different tab).
+ */
+export default class ErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode; resetKey?: unknown }, { error: Error | null }> {
   state = { error: null as Error | null }
 
   static getDerivedStateFromError(error: Error) {
     return { error }
   }
 
+  componentDidUpdate(prev: { resetKey?: unknown }) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null })
+  }
+
   render() {
     if (this.state.error) {
+      if (this.props.fallback !== undefined) return this.props.fallback
       return (
         <div className="flex h-screen flex-col items-center justify-center gap-3 p-6 text-center">
           <div className="text-3xl">💥</div>

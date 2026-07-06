@@ -29,6 +29,8 @@ const VIEWS = [
   { v: 'home', label: 'bots', icon: '🤖' },
   { v: 'portfolio', label: 'portfolio', icon: '💼' },
   { v: 'market', label: 'market', icon: '📈' },
+  { v: 'trade', label: 'trade', icon: '💱' },
+  { v: 'signals', label: 'signals', icon: '📡' },
   { v: 'smart', label: 'smart-money', icon: '🐋' },
   { v: 'copy', label: 'copy-trade', icon: '🔁' },
 ] as const
@@ -211,10 +213,10 @@ function BotAvatar({ bot, color, active, onClick, onMouseEnter, onMouseLeave }: 
 }
 
 export default function Sidebar() {
-  const { bots, view, setView, selectBot, selectedBotId, wsOk, mode, meta, openWizard } = useStore(
+  const { bots, view, setView, selectBot, selectedBotId, wsOk, mode, meta, openNewBot } = useStore(
     useShallow((s) => ({
       bots: s.bots, view: s.view, setView: s.setView, selectBot: s.selectBot, selectedBotId: s.selectedBotId,
-      wsOk: s.wsOk, mode: s.mode, meta: s.meta, openWizard: s.openWizard,
+      wsOk: s.wsOk, mode: s.mode, meta: s.meta, openNewBot: s.openNewBot,
     })),
   )
   const [q, setQ] = useState('')
@@ -321,7 +323,7 @@ export default function Sidebar() {
         </div>
 
         <div className="mt-2 flex shrink-0 flex-col items-center gap-2 border-t border-white/[0.08] pt-3">
-          <RailButton icon="+" label="New bot" accent onClick={() => openWizard(true)} {...tipFor({ label: 'New bot' })} />
+          <RailButton icon="+" label="New bot" accent onClick={() => openNewBot(true)} {...tipFor({ label: 'New bot' })} />
           <button
             onClick={() => setCollapsed(false)}
             aria-label="Expand sidebar"
@@ -472,7 +474,7 @@ export default function Sidebar() {
             id="bots"
             title="Your bots"
             count={running > 0 ? <CountBadge>{running} live</CountBadge> : undefined}
-            onAdd={() => openWizard(true)}
+            onAdd={() => openNewBot(true)}
             addTitle="New bot"
           >
             {byMode.length === 0 && <p className="px-2 py-1 text-[12px] leading-relaxed text-slate-600">No {mode === 'live' ? 'live ' : ''}bots yet. Hit ＋ to launch one.</p>}
@@ -509,7 +511,7 @@ export default function Sidebar() {
                 </NavRow>
               )
             })}
-            <button onClick={() => openWizard(true)} className="mt-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-slate-200">
+            <button onClick={() => openNewBot(true)} className="mt-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-slate-500 transition-colors hover:bg-white/[0.06] hover:text-slate-200">
               <span className="flex h-4 w-4 items-center justify-center rounded bg-white/[0.06] text-[11px]">+</span>
               Add a bot
             </button>

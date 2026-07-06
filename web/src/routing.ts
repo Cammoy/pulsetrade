@@ -5,15 +5,15 @@ import { useStore } from './store'
 // portfolio sub-tab, or an open bot) and the URL updates; load/refresh/back-forward restore it.
 //   #              or #bots      → bots (home)
 //   #market #smart-money #copy-trade #docs
-//   #portfolio/holdings | wallet | staking | withdraw
+//   #portfolio/holdings | wallet | staking | earn | withdraw
 //   #bot/<id>                    → that bot's detail overlay
 
-export type View = 'home' | 'market' | 'smart' | 'copy' | 'portfolio' | 'docs'
-export type PortfolioTab = 'holdings' | 'wallet' | 'staking' | 'withdraw'
+export type View = 'home' | 'market' | 'smart' | 'copy' | 'signals' | 'trade' | 'portfolio' | 'docs'
+export type PortfolioTab = 'holdings' | 'wallet' | 'staking' | 'earn' | 'withdraw'
 
-const VIEW_SLUG: Record<Exclude<View, 'home'>, string> = { market: 'market', smart: 'smart-money', copy: 'copy-trade', portfolio: 'portfolio', docs: 'docs' }
-const SLUG_VIEW: Record<string, View> = { '': 'home', bots: 'home', market: 'market', 'smart-money': 'smart', 'copy-trade': 'copy', portfolio: 'portfolio', docs: 'docs' }
-const PORT_TABS = new Set<PortfolioTab>(['holdings', 'wallet', 'staking', 'withdraw'])
+const VIEW_SLUG: Record<Exclude<View, 'home'>, string> = { market: 'market', smart: 'smart-money', copy: 'copy-trade', signals: 'signals', trade: 'trade', portfolio: 'portfolio', docs: 'docs' }
+const SLUG_VIEW: Record<string, View> = { '': 'home', bots: 'home', market: 'market', 'smart-money': 'smart', 'copy-trade': 'copy', signals: 'signals', trade: 'trade', portfolio: 'portfolio', docs: 'docs' }
+const PORT_TABS = new Set<PortfolioTab>(['holdings', 'wallet', 'staking', 'earn', 'withdraw'])
 
 export interface RouteState { view: View; portfolioTab: PortfolioTab; selectedBotId: string | null }
 

@@ -900,25 +900,37 @@ function downsampleSeries(series: { v: number }[], max: number): number[] {
   return Array.from({ length: max }, (_, i) => vals[Math.round(i * step)])
 }
 
-let leaderboardCache: { at: number; rows: LeaderboardRow[] } | null = null
+let leaderboardCache: { at: number; rows: LeaderboardRow[]; pricingDegraded: boolean } | null = null
 const LEADERBOARD_TTL = 10 * 60_000 // 10 min — same wallet fetches as consensus; scores move slowly
 
 /** Score + rank all tracked wallets by copy-worthiness. Cached 10 min (same per-wallet
  *  Etherscan fetches as the consensus view). Returns `needsKey` when tracking is off. */
-export async function smartMoneyLeaderboard(now = Date.now()): Promise<{ rows: LeaderboardRow[]; needsKey: boolean; totalWallets: number; caveat: string }> {
+export async function smartMoneyLeaderboard(now = Date.now()): Promise<{ rows: LeaderboardRow[]; needsKey: boolean; totalWallets: number; caveat: string; pricingDegraded: boolean }> {
   ensureSeeded()
   const totalWallets = listWallets().length
-  if (!trackingReady()) return { rows: [], needsKey: true, totalWallets, caveat: SCORE_CAVEAT }
+  if (!trackingReady()) return { rows: [], needsKey: true, totalWallets, caveat: SCORE_CAVEAT, pricingDegraded: false }
   if (leaderboardCache && now - leaderboardCache.at < LEADERBOARD_TTL)
-    return { rows: leaderboardCache.rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT }
+    return { rows: leaderboardCache.rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT, pricingDegraded: leaderboardCache.pricingDegraded }
   // Warm mainnet majors so USD-valued flow (and thus realized-flow) is populated.
   await getSpotPrices(MAINNET_CG_IDS).catch(() => {})
   const rows: LeaderboardRow[] = []
+  // Distinguish "pricing is rate-limited" from "wallets are just thin": degraded only when
+  // wallets DID complete round-trips (so they're priceable in principle) yet NONE could be
+  // valued historically and some tokens came back unpriced. Thin wallets (no round-trips)
+  // don't trip it.
+  let anyRoundTrips = false
+  let anyPriced = false
+  let anyUnpriced = false
   for (const w of listWallets()) {
     const events = await walletEvents(w.address, { allTokens: true }).catch(() => [])
     const stats = computeWalletStats(events)
     // True cost-basis realized P&L; fall back to the flow proxy when nothing could be priced.
     const realized = await computeRealizedPnl(events).catch(() => null)
+    if (realized) {
+      if (realized.roundTrips > 0) anyRoundTrips = true
+      if (realized.pricedTokens > 0) anyPriced = true
+      if (realized.unpricedTokens > 0) anyUnpriced = true
+    }
     const score = computeWalletScore(stats, now, realized && realized.pricedTokens > 0 ? realized : undefined)
     rows.push({
       address: w.address,
@@ -942,6 +954,7 @@ export async function smartMoneyLeaderboard(now = Date.now()): Promise<{ rows: L
   // Best first: score, then the scored profit signal (realized P&L if present, else flow), then recency.
   const signal = (r: LeaderboardRow) => r.realizedPnlUsd ?? r.realizedFlowUsd
   rows.sort((a, b) => b.score - a.score || signal(b) - signal(a) || (b.lastTs ?? 0) - (a.lastTs ?? 0))
-  leaderboardCache = { at: now, rows }
-  return { rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT }
+  const pricingDegraded = anyRoundTrips && !anyPriced && anyUnpriced
+  leaderboardCache = { at: now, rows, pricingDegraded }
+  return { rows, needsKey: false, totalWallets, caveat: SCORE_CAVEAT, pricingDegraded }
 }

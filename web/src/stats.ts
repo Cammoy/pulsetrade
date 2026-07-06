@@ -8,6 +8,23 @@ export type Risk = (typeof RISKS)[number]
 export const botsForMode = <T extends { mode?: 'paper' | 'live' }>(bots: T[], mode: 'paper' | 'live'): T[] =>
   bots.filter((b) => (b.mode ?? 'paper') === mode)
 
+export type BotSort = 'recent' | 'pnl' | 'name'
+
+/**
+ * Order active bots for the dashboard grid: RUNNING bots always lead (you watch live ones
+ * first), then by the chosen key — newest, P&L (desc), or name (A→Z). Pure + returns a new
+ * array so it's safe to call in render and unit-testable on its own.
+ */
+export function sortBotsForGrid<T extends { status: string; totalPnlUsd: number; token: string; name: string; createdAt: number }>(bots: T[], key: BotSort): T[] {
+  return [...bots].sort((a, b) => {
+    const run = (b.status === 'running' ? 1 : 0) - (a.status === 'running' ? 1 : 0)
+    if (run) return run
+    if (key === 'pnl') return b.totalPnlUsd - a.totalPnlUsd
+    if (key === 'name') return (a.token || a.name).localeCompare(b.token || b.name)
+    return b.createdAt - a.createdAt // 'recent'
+  })
+}
+
 export interface AggStats {
   /** realized + unrealized across all bots */
   totalPnl: number

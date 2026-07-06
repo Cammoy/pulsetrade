@@ -3,6 +3,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { TradeSignal } from './signals.js' // type-only — erased at runtime, no import cycle
+import type { PriceAlert } from './alerts.js' // type-only — erased at runtime, no import cycle
+import type { PerpPosition } from './perps.js' // type-only — erased at runtime, no import cycle
+import type { LimitOrder } from './limit-orders.js' // type-only — erased at runtime, no import cycle
 
 const DIR = process.env.DATA_DIR ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data')
 const FILE = path.join(DIR, 'state.json')
@@ -66,6 +70,10 @@ export interface Bot {
   token: string // symbol within network (or sniped token symbol)
   strategy: string
   risk: 'conservative' | 'balanced' | 'aggressive'
+  /** Per-bot exit overrides for NON-sniper, NON-copy strategy/AI bots — when set, they
+   *  replace the risk-tier take-profit / stop-loss in the decide() path (snipers use
+   *  `sniper`, copies use `copy`). Absent ⇒ the bot tracks its risk tier. */
+  overrides?: { takeProfitPct?: number; stopLossPct?: number }
   budgetUsd: number
   cashUsd: number
   status: 'running' | 'paused' | 'stopped' | 'scheduled'
@@ -336,6 +344,16 @@ export interface State {
   // entry behind; boot reconciles it (books the intended spend so the cap can't undercount,
   // flags the bot for position reconcile) instead of silently losing a real spend. [P1-7]
   pendingBuys?: { botId: string; network: string; token: string; usd: number; ts: number }[]
+  // Advisory trading-signal channel: live (active) signals + closed (history, for the
+  // forward-test stats) + the operator's own hand-configured tracked trades. Optional —
+  // backfilled to empty by load() for a pre-feature state.
+  signals?: { active: TradeSignal[]; history: TradeSignal[]; tracked: TradeSignal[] }
+  // Price alerts — notify when a coin crosses a level or moves ±%. Optional; load() backfills [].
+  alerts?: PriceAlert[]
+  // Paper perpetual-futures positions (open + recently closed). Optional; load() backfills [].
+  perps?: PerpPosition[]
+  // Limit (conditional) orders. Optional; load() backfills [].
+  limitOrders?: LimitOrder[]
 }
 
 const empty: State = {
@@ -344,6 +362,10 @@ const empty: State = {
   prefs: { watchlist: [] }, liveSpend: { day: '', usd: 0 },
   breaker: { tripped: false, reason: '', trippedAt: null, realizedUsd: 0, spentUsd: 0 },
   vault: {}, withdrawals: [], swaps: [], tracker: [], pendingBuys: [],
+  signals: { active: [], history: [], tracked: [] },
+  alerts: [],
+  perps: [],
+  limitOrders: [],
 }
 
 export function monthKey(ts: number): string {
@@ -443,6 +465,13 @@ function load(): State {
     s.breaker.realizedUsd = Number.isFinite(s.breaker.realizedUsd) ? s.breaker.realizedUsd : 0
     s.breaker.spentUsd = Number.isFinite(s.breaker.spentUsd) ? s.breaker.spentUsd : 0
     if (!Array.isArray(s.pendingBuys)) s.pendingBuys = [] // in-flight live-buy journal [P1-7]
+    // Signal channel: coerce to a well-formed { active, history } so the engine can index
+    // both arrays directly even from a corrupt/legacy state.json.
+    if (!s.signals || typeof s.signals !== 'object' || Array.isArray(s.signals)) s.signals = { active: [], history: [], tracked: [] }
+    else s.signals = { active: Array.isArray(s.signals.active) ? s.signals.active : [], history: Array.isArray(s.signals.history) ? s.signals.history : [], tracked: Array.isArray(s.signals.tracked) ? s.signals.tracked : [] }
+    if (!Array.isArray(s.alerts)) s.alerts = [] // price alerts
+    if (!Array.isArray(s.perps)) s.perps = [] // paper perps positions
+    if (!Array.isArray(s.limitOrders)) s.limitOrders = [] // limit/conditional orders
     // Fail CLOSED to paper: a missing/garbled settings block (settings:null, {},
     // or an unknown mode) must never leave mode undefined — every consumer reads
     // settings.mode, and a live-or-undefined value here is the worst default.

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useStore } from './store'
 import { useHashRoute } from './routing'
 import { useShallow } from 'zustand/react/shallow'
-import { botsForMode } from './stats'
+import { botsForMode, sortBotsForGrid, type BotSort } from './stats'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import ChannelHeader from './components/ChannelHeader'
@@ -19,10 +19,13 @@ import ProfitCalculator from './components/ProfitCalculator'
 import Docs from './components/Docs'
 import Onboarding from './components/Onboarding'
 import Wizard from './components/Wizard'
+import NewBotHub from './components/NewBotHub'
 import BotDetail from './components/BotDetail'
 import ErrorBoundary from './components/ErrorBoundary'
 import SmartMoney from './components/SmartMoney'
 import CopyTrading from './components/CopyTrading'
+import SignalChannel from './components/SignalChannel'
+import Trade from './components/Trade'
 import AiBot from './components/AiBot'
 import MarketPanel from './components/MarketPanel'
 import Portfolio from './components/Portfolio'
@@ -46,19 +49,20 @@ function SectionLabel({ title, sub, right }: { title: string; sub?: string; righ
 
 function Main() {
   const {
-    init, bots, view, wizardOpen, finderOpen, sniperOpen, swapOpen, calcOpen, tourOpen,
-    aiOpen, tournamentOpen, openWizard, openTour, selectedBotId, createBot, notify, mode, confirm,
+    init, bots, view, wizardOpen, newBotOpen, finderOpen, sniperOpen, swapOpen, calcOpen, tourOpen,
+    aiOpen, tournamentOpen, openNewBot, openTour, selectedBotId, createBot, notify, mode, confirm,
   } = useStore(
     useShallow((s) => ({
-      init: s.init, bots: s.bots, view: s.view, wizardOpen: s.wizardOpen, finderOpen: s.finderOpen,
+      init: s.init, bots: s.bots, view: s.view, wizardOpen: s.wizardOpen, newBotOpen: s.newBotOpen, finderOpen: s.finderOpen,
       sniperOpen: s.sniperOpen, swapOpen: s.swapOpen, calcOpen: s.calcOpen, tourOpen: s.tourOpen, aiOpen: s.aiOpen,
-      tournamentOpen: s.tournamentOpen, openWizard: s.openWizard, openTour: s.openTour,
+      tournamentOpen: s.tournamentOpen, openNewBot: s.openNewBot, openTour: s.openTour,
       selectedBotId: s.selectedBotId, createBot: s.createBot, notify: s.notify, mode: s.mode, confirm: s.confirm,
     })),
   )
   const [ready, setReady] = useState(false)
   const [bootErr, setBootErr] = useState(false)
   const [launching, setLaunching] = useState(false)
+  const [botSort, setBotSort] = useState<BotSort>('recent')
   // Bookmarkable URLs: sync the location hash with the active channel / portfolio tab / open bot.
   useHashRoute(ready)
 
@@ -69,6 +73,8 @@ function Main() {
   const botsByMode = botsForMode(bots, mode)
   const activeBots = botsByMode.filter((b) => !isArchived(b))
   const archivedBots = botsByMode.filter(isArchived)
+  // Sort the active grid so a fleet stays scannable (running-first within each sort key).
+  const sortedActive = sortBotsForGrid(activeBots, botSort)
 
   // One-click "All-Weather" bot: the regime-switching adaptive strategy (rides
   // uptrends, mean-reverts ranges, goes to cash in downtrends) on a liquid coin,
@@ -141,6 +147,10 @@ function Main() {
               <SmartMoney />
             ) : view === 'copy' ? (
               <CopyTrading />
+            ) : view === 'signals' ? (
+              <SignalChannel />
+            ) : view === 'trade' ? (
+              <Trade />
             ) : view === 'docs' ? (
               <Docs />
             ) : (
@@ -169,11 +179,8 @@ function Main() {
                       <button className="btn-primary !px-6 !py-3 text-base" onClick={launchAllWeather} disabled={launching}>
                         {launching ? 'Launching…' : '🌤️ One-click All-Weather bot'}
                       </button>
-                      <button className="btn-ghost !px-5 !py-3 text-base" onClick={() => openWizard(true)}>
-                        🚀 Customize a bot
-                      </button>
-                      <button className="btn-ghost !px-5 !py-3 text-base" onClick={() => useStore.getState().openFinder(true)}>
-                        💡 Find max profit
+                      <button className="btn-ghost !px-5 !py-3 text-base" onClick={() => openNewBot(true)}>
+                        🚀 New bot — pick a method
                       </button>
                     </div>
                     <p className="-mt-1 max-w-md text-xs text-slate-500">
@@ -187,25 +194,37 @@ function Main() {
                       sub={`${activeBots.length} active · ${activeBots.filter((b) => b.status === 'running').length} running${archivedBots.length ? ` · ${archivedBots.length} archived` : ''}`}
                       right={
                         <>
+                          {activeBots.length > 1 && (
+                            <select
+                              value={botSort}
+                              onChange={(e) => setBotSort(e.target.value as typeof botSort)}
+                              aria-label="Sort bots"
+                              className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1.5 text-xs text-slate-300 outline-none focus:border-indigo-400/60"
+                            >
+                              <option value="recent">Newest</option>
+                              <option value="pnl">P&amp;L</option>
+                              <option value="name">Name</option>
+                            </select>
+                          )}
                           <button onClick={launchAllWeather} disabled={launching} className="btn-ghost hidden !py-1.5 text-xs sm:inline-flex">
                             {launching ? 'Launching…' : '🌤️ All-Weather'}
                           </button>
-                          <button onClick={() => openWizard(true)} className="btn-primary !py-1.5 text-xs">
+                          <button onClick={() => openNewBot(true)} className="btn-primary !py-1.5 text-xs">
                             + New bot
                           </button>
                         </>
                       }
                     />
                     <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-                      {activeBots.map((b, i) => (
+                      {sortedActive.map((b, i) => (
                         <BotCard key={b.id} bot={b} index={i} />
                       ))}
                       <div className="glass flex min-h-44 flex-col items-center justify-center gap-2.5 self-start border-dashed p-4 text-slate-500">
                         <button onClick={launchAllWeather} disabled={launching} className="btn-primary w-full !py-2.5 text-sm">
                           {launching ? 'Launching…' : '🌤️ One-click All-Weather'}
                         </button>
-                        <button onClick={() => openWizard(true)} className="text-sm font-medium hover:text-slate-300">
-                          + Customize a new bot
+                        <button onClick={() => openNewBot(true)} className="text-sm font-medium hover:text-slate-300">
+                          + New bot — pick a method
                         </button>
                       </div>
                     </div>
@@ -233,6 +252,7 @@ function Main() {
       <Toaster />
       <ConfirmDialog />
 
+      {newBotOpen && <NewBotHub />}
       {wizardOpen && <Wizard />}
       {finderOpen && <ProfitFinder />}
       {sniperOpen && <Sniper />}

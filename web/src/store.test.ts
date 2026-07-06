@@ -89,6 +89,150 @@ describe('handleWsMessage', () => {
   })
 })
 
+describe('signal channel WS frames', () => {
+  const emptyStats = { closed: 0, wins: 0, losses: 0, winRatePct: null, avgR: null, totalR: 0, tp1HitRatePct: null, bestR: null, worstR: null, active: 0 }
+  beforeEach(() =>
+    useStore.setState({
+      signals: { active: [], history: [{ id: 'h1' } as never], tracked: [], radar: [], stats: emptyStats, enabled: true, needsAi: false, generatedAt: null },
+      toasts: [],
+    }),
+  )
+
+  test('a `signals` frame replaces the whole channel slice (radar included)', () => {
+    const payload = { active: [{ id: 's1' }], history: [{ id: 'h2' }], radar: [{ symbol: 'SOL', bias: 'LONG' }], stats: { ...emptyStats, closed: 1 }, enabled: true, needsAi: false, generatedAt: 123 }
+    handleWsMessage(JSON.stringify({ type: 'signals', payload }))
+    const sig = useStore.getState().signals
+    expect(sig.active.map((s) => s.id)).toEqual(['s1'])
+    expect(sig.history.map((s) => s.id)).toEqual(['h2'])
+    expect(sig.radar.map((r) => r.symbol)).toEqual(['SOL'])
+    expect(sig.stats.closed).toBe(1)
+    expect(sig.generatedAt).toBe(123)
+  })
+
+  test('a `signals` frame missing radar defaults it to [] (no crash for consumers)', () => {
+    handleWsMessage(JSON.stringify({ type: 'signals', payload: { active: [], history: [], stats: emptyStats, enabled: true, needsAi: false, generatedAt: 1 } }))
+    expect(useStore.getState().signals.radar).toEqual([])
+  })
+
+  test('a snapshot merges the live slice (active + radar + stats) and PRESERVES history', () => {
+    handleWsMessage(JSON.stringify({ type: 'snapshot', signals: { active: [{ id: 'a1' }], radar: [{ symbol: 'BTC', bias: 'SHORT' }], stats: { ...emptyStats, active: 1 }, enabled: true, needsAi: false, generatedAt: 9 } }))
+    const sig = useStore.getState().signals
+    expect(sig.active.map((s) => s.id)).toEqual(['a1'])
+    expect(sig.radar.map((r) => r.symbol)).toEqual(['BTC'])
+    expect(sig.history.map((s) => s.id)).toEqual(['h1']) // history untouched by the snapshot
+    expect(sig.generatedAt).toBe(9)
+  })
+
+  test('a snapshot without a signals field leaves the channel untouched', () => {
+    handleWsMessage(JSON.stringify({ type: 'snapshot' }))
+    expect(useStore.getState().signals.history.map((s) => s.id)).toEqual(['h1'])
+  })
+
+  test('a new `signal` frame toasts the operator', () => {
+    handleWsMessage(JSON.stringify({ type: 'signal', signal: { id: 'n1', asset: 'BTC/USDT', direction: 'LONG', confidence: 72, riskReward: 2.1 } }))
+    expect(useStore.getState().toasts.some((t) => /New signal/.test(t.msg) && /BTC\/USDT/.test(t.msg))).toBe(true)
+  })
+
+  test('a closing `signal-update` toasts the outcome; an open update is silent', () => {
+    handleWsMessage(JSON.stringify({ type: 'signal-update', signal: { id: 'u1', asset: 'ETH/USDT', direction: 'LONG', status: 'tp1' } })) // still open
+    expect(useStore.getState().toasts).toHaveLength(0)
+    handleWsMessage(JSON.stringify({ type: 'signal-update', signal: { id: 'u1', asset: 'ETH/USDT', direction: 'LONG', status: 'tp3', closedAt: 5, realizedR: 1.8 } }))
+    expect(useStore.getState().toasts.some((t) => /ETH\/USDT/.test(t.msg) && /1\.8R/.test(t.msg))).toBe(true)
+  })
+
+  test('a `tracked` frame toasts that the trade is being tracked', () => {
+    handleWsMessage(JSON.stringify({ type: 'tracked', trade: { id: 't1', asset: 'BTC/USDT', direction: 'LONG', entryMid: 100, stopLoss: 95 } }))
+    expect(useStore.getState().toasts.some((t) => /Tracking/.test(t.msg) && /BTC\/USDT/.test(t.msg))).toBe(true)
+  })
+
+  test('a closing `tracked-update` toasts your trade outcome', () => {
+    handleWsMessage(JSON.stringify({ type: 'tracked-update', trade: { id: 't1', asset: 'BTC/USDT', direction: 'SHORT', status: 'stopped', closedAt: 9, realizedR: -1 } }))
+    expect(useStore.getState().toasts.some((t) => /Your trade/.test(t.msg) && /-1R/.test(t.msg))).toBe(true)
+  })
+
+  test('a `signals` frame missing tracked defaults it to []', () => {
+    handleWsMessage(JSON.stringify({ type: 'signals', payload: { active: [], history: [], radar: [], stats: emptyStats, enabled: true, needsAi: false, generatedAt: 1 } }))
+    expect(useStore.getState().signals.tracked).toEqual([])
+  })
+})
+
+describe('price alert WS frames', () => {
+  beforeEach(() => useStore.setState({ alerts: [], toasts: [] }))
+
+  test('an `alerts` frame replaces the alert list', () => {
+    handleWsMessage(JSON.stringify({ type: 'alerts', alerts: [{ id: 'a1', symbol: 'BTC' }, { id: 'a2', symbol: 'ETH' }] }))
+    expect(useStore.getState().alerts.map((a) => a.id)).toEqual(['a1', 'a2'])
+  })
+
+  test('a snapshot carries the alert list', () => {
+    handleWsMessage(JSON.stringify({ type: 'snapshot', alerts: [{ id: 'a3', symbol: 'SOL' }] }))
+    expect(useStore.getState().alerts.map((a) => a.id)).toEqual(['a3'])
+  })
+
+  test('a snapshot without alerts leaves them untouched', () => {
+    useStore.setState({ alerts: [{ id: 'keep' } as never] })
+    handleWsMessage(JSON.stringify({ type: 'snapshot' }))
+    expect(useStore.getState().alerts.map((a) => a.id)).toEqual(['keep'])
+  })
+
+  test('an `alert-trigger` frame toasts the operator', () => {
+    handleWsMessage(JSON.stringify({ type: 'alert-trigger', alert: { id: 'a1', symbol: 'BTC', kind: 'above', value: 65000, triggeredPrice: 65012 } }))
+    expect(useStore.getState().toasts.some((t) => /BTC/.test(t.msg) && /crossed above/.test(t.msg))).toBe(true)
+  })
+})
+
+describe('perps WS frames', () => {
+  const emptyStats = { open: 0, closed: 0, wins: 0, losses: 0, winRatePct: null, realizedPnlUsd: 0, openMarginUsd: 0 }
+  beforeEach(() => useStore.setState({ perps: { open: [], closed: [], stats: emptyStats, maxLeverage: 50, liveEnabled: false }, toasts: [] }))
+
+  test('a `perps` frame replaces the whole perps payload', () => {
+    handleWsMessage(JSON.stringify({ type: 'perps', payload: { open: [{ id: 'p1', symbol: 'BTC' }], closed: [{ id: 'p0' }], stats: { ...emptyStats, open: 1 }, maxLeverage: 50, liveEnabled: false } }))
+    const p = useStore.getState().perps
+    expect(p.open.map((x) => x.id)).toEqual(['p1'])
+    expect(p.closed.map((x) => x.id)).toEqual(['p0'])
+    expect(p.stats.open).toBe(1)
+  })
+
+  test('a snapshot merges open + stats and PRESERVES closed history', () => {
+    useStore.setState({ perps: { open: [], closed: [{ id: 'old' } as never], stats: emptyStats, maxLeverage: 50, liveEnabled: false } })
+    handleWsMessage(JSON.stringify({ type: 'snapshot', perps: { open: [{ id: 'p2', symbol: 'ETH' }], stats: { ...emptyStats, open: 1 }, liveEnabled: false } }))
+    const p = useStore.getState().perps
+    expect(p.open.map((x) => x.id)).toEqual(['p2'])
+    expect(p.closed.map((x) => x.id)).toEqual(['old']) // untouched
+  })
+
+  test('a `perp` frame toasts the opened position', () => {
+    handleWsMessage(JSON.stringify({ type: 'perp', position: { id: 'p1', symbol: 'BTC', side: 'long', leverage: 10, entryPrice: 60000 } }))
+    expect(useStore.getState().toasts.some((t) => /Opened BTC LONG 10×/.test(t.msg))).toBe(true)
+  })
+
+  test('a closing `perp-update` toasts the outcome (liquidation marked)', () => {
+    handleWsMessage(JSON.stringify({ type: 'perp-update', position: { id: 'p1', symbol: 'BTC', side: 'long', status: 'closed', closeReason: 'liquidated', realizedPnlUsd: -100 } }))
+    expect(useStore.getState().toasts.some((t) => /BTC LONG liquidated/.test(t.msg) && /-\$100/.test(t.msg))).toBe(true)
+  })
+})
+
+describe('limit-order WS frames', () => {
+  beforeEach(() => useStore.setState({ limitOrders: [], toasts: [] }))
+
+  test('a `limit-orders` frame replaces the order list', () => {
+    handleWsMessage(JSON.stringify({ type: 'limit-orders', orders: [{ id: 'o1', symbol: 'SOL' }, { id: 'o2', symbol: 'BTC' }] }))
+    expect(useStore.getState().limitOrders.map((o) => o.id)).toEqual(['o1', 'o2'])
+  })
+
+  test('a snapshot carries the order list', () => {
+    handleWsMessage(JSON.stringify({ type: 'snapshot', limitOrders: [{ id: 'o3', symbol: 'ETH' }] }))
+    expect(useStore.getState().limitOrders.map((o) => o.id)).toEqual(['o3'])
+  })
+
+  test('a `limit-fill` (filled) toasts the fill; expired toasts too', () => {
+    handleWsMessage(JSON.stringify({ type: 'limit-fill', order: { id: 'o1', symbol: 'SOL', side: 'buy', status: 'filled', fillPrice: 140 } }))
+    expect(useStore.getState().toasts.some((t) => /Limit BUY filled/.test(t.msg) && /SOL/.test(t.msg))).toBe(true)
+    handleWsMessage(JSON.stringify({ type: 'limit-fill', order: { id: 'o2', symbol: 'BTC', side: 'sell', status: 'expired' } }))
+    expect(useStore.getState().toasts.some((t) => /expired/.test(t.msg))).toBe(true)
+  })
+})
+
 describe('navigation actions — Portfolio sub-tab selection', () => {
   test('setPortfolioTab switches the active Portfolio tab directly', () => {
     useStore.setState({ portfolioTab: 'holdings' })

@@ -11,7 +11,8 @@ import BotCard from './BotCard'
  * moves it back to the active list automatically.
  */
 export default function ArchivedBots({ bots }: { bots: Bot[] }) {
-  const { remove, confirm } = useStore()
+  const remove = useStore((s) => s.remove)
+  const confirm = useStore((s) => s.confirm)
   const [open, setOpen] = useState(false)
   if (bots.length === 0) return null
 

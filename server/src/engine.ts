@@ -28,6 +28,10 @@ import { providerHealth, alertConfigured, notifyAsync } from './health.js'
 import { isWin, isLoss } from './pnl.js'
 import { broadcast, setBroadcast, type Broadcast } from './broadcast.js'
 import { creditVault, vaultBalance } from './vault.js'
+import { runSignalScan, trackSignalOutcomes, getSignalsSnapshot, signalsEnabled, signalPriceIds } from './signal-engine.js'
+import { checkAlerts, getAlertsPayload, alertPriceIds } from './alerts.js'
+import { trackPerps, getPerpsSnapshot, perpPriceIds } from './perp-engine.js'
+import { checkLimitOrders, getLimitOrdersPayload, limitPriceIds } from './limit-orders.js'
 // Re-export the profit-vault / withdrawal API (moved to ./vault.js) so app.ts keeps
 // importing profitVault/listWithdrawals/requestWithdrawal off './engine.js'.
 export { profitVault, listWithdrawals, requestWithdrawal } from './vault.js'
@@ -875,6 +879,15 @@ async function tickBot(bot: Bot) {
   const strat = strategyById(bot.strategy)
   let params = RISK[bot.risk]
   if (!strat || !params) return
+  // Per-bot exit overrides (strategy/AI bots): replace the tier's TP/SL. Spread into a FRESH
+  // object — `RISK[bot.risk]` is a SHARED singleton, so mutating it would leak to every bot.
+  if (bot.overrides && (bot.overrides.takeProfitPct != null || bot.overrides.stopLossPct != null)) {
+    params = {
+      ...params,
+      ...(bot.overrides.takeProfitPct != null ? { takeProfitPct: bot.overrides.takeProfitPct } : {}),
+      ...(bot.overrides.stopLossPct != null ? { stopLossPct: bot.overrides.stopLossPct } : {}),
+    }
+  }
   // Copy bots MIRROR the wallet — so they use copy-scoped params (no tier take-profit cap; SL/TP
   // are opt-in safety nets only). [copy-mirror]
   if (bot.copy) params = copyParams(params, bot.copy, bot.mode)
@@ -1071,6 +1084,12 @@ async function tick() {
     const priceIds = new Set(allPriceIds())
     for (const b of state.bots) if (b.cg && b.status !== 'stopped') priceIds.add(b.cg)
     if (smartMoneyReady()) for (const id of MAINNET_CG_IDS) priceIds.add(id)
+    // Keep signal + alert coins (which live outside the bot universe) priced every tick, so
+    // outcome tracking and alert checks read a FRESH price rather than a frozen first-fetch.
+    for (const id of signalPriceIds()) priceIds.add(id)
+    for (const id of alertPriceIds()) priceIds.add(id)
+    for (const id of perpPriceIds()) priceIds.add(id)
+    for (const id of limitPriceIds()) priceIds.add(id)
     await getSpotPrices([...priceIds])
     // Refresh DEX pool prices for any active sniper bots (deduped by pool).
     const pools = new Map<string, { gt: string; addr: string }>()
@@ -1104,6 +1123,16 @@ async function tick() {
     await autoScan().catch((e) => console.error('[engine] auto-sniper scan failed', e))
     await followScan().catch((e) => console.error('[engine] follow scan failed', e))
     resolveTournaments()
+    // Advisory signal channel: advance every active signal against fresh price (the
+    // forward-test harness). Cheap — cached spot prices + pure math; broadcasts its own
+    // transitions. Never lets a signal error abort the money-path tick.
+    await trackSignalOutcomes(Date.now()).catch((e) => console.error('[engine] signal tracking failed', e))
+    // Price alerts: fire on a level cross / move. Cheap (cached prices), self-broadcasting.
+    await checkAlerts(Date.now()).catch((e) => console.error('[engine] alert check failed', e))
+    // Paper perps: mark open positions, accrue funding, close on tp/stop/liquidation.
+    await trackPerps(Date.now()).catch((e) => console.error('[engine] perp tracking failed', e))
+    // Limit orders: fill on a price trigger (simulated), expire past TTL.
+    await checkLimitOrders(Date.now()).catch((e) => console.error('[engine] limit-order check failed', e))
     save()
     const prices: Record<string, number> = {}
     for (const id of allPriceIds()) {
@@ -1113,6 +1142,10 @@ async function tick() {
     broadcast({
       type: 'snapshot', ts: Date.now(), bots: state.bots.map(serializeBot), prices,
       monthly: state.monthly,
+      signals: getSignalsSnapshot(),
+      alerts: getAlertsPayload().alerts,
+      perps: getPerpsSnapshot(),
+      limitOrders: getLimitOrdersPayload().orders,
       // The active workspace + live circuit-breaker state, so the web always reflects the
       // SERVER (meta/init is boot-only and can go stale — e.g. a cached /api/state or a
       // second tab — leaving the mode toggle/wizard showing the wrong workspace). [realtime]
@@ -1185,7 +1218,11 @@ const SNIPER_POLL_MS = 3_000 // fast exit checks for the volatile pools snipers 
 let engineTimer: ReturnType<typeof setInterval> | null = null
 let watchdogTimer: ReturnType<typeof setInterval> | null = null
 let sniperTimer: ReturnType<typeof setInterval> | null = null
+let signalTimer: ReturnType<typeof setInterval> | null = null
 let stallAlerted = false
+// Signal scans cadence the channel independently of the 20s tick — discovery + AI
+// validation + risk gating is slow and network-heavy, so it gets its own slow loop.
+const SIGNAL_SCAN_MS = 60_000 // the scan itself self-throttles to SIGNALS_SCAN_MS (default 5m)
 
 export function startEngine(b: Broadcast) {
   setBroadcast(b)
@@ -1217,7 +1254,14 @@ export function startEngine(b: Broadcast) {
   // Fast sniper exit poll (decoupled from the 20s global tick); shares engineBusy with tick(). [P1-9]
   sniperTimer = setInterval(() => void sniperPoll(), SNIPER_POLL_MS)
   sniperTimer.unref?.()
-  console.log(`[engine] running — ${state.bots.length} bot(s) loaded, tick every ${TICK_MS / 1000}s, sniper poll ${SNIPER_POLL_MS / 1000}s`)
+  // Advisory signal channel scan (self-throttled to SIGNALS_SCAN_MS). Only loops when a
+  // Gemini key is present — otherwise the channel is a no-op and we don't spin a timer.
+  if (signalsEnabled()) {
+    signalTimer = setInterval(() => void runSignalScan(), SIGNAL_SCAN_MS)
+    signalTimer.unref?.()
+    setTimeout(() => void runSignalScan(), 15_000).unref?.() // first scan shortly after boot
+  }
+  console.log(`[engine] running — ${state.bots.length} bot(s) loaded, tick every ${TICK_MS / 1000}s, sniper poll ${SNIPER_POLL_MS / 1000}s${signalsEnabled() ? ', signal channel on' : ''}`)
 }
 
 /** Graceful drain for shutdown: stop scheduling ticks, then await any in-flight swap/
@@ -1228,6 +1272,7 @@ export async function stopEngine(timeoutMs = 25_000): Promise<void> {
   if (engineTimer) { clearInterval(engineTimer); engineTimer = null }
   if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null }
   if (sniperTimer) { clearInterval(sniperTimer); sniperTimer = null }
+  if (signalTimer) { clearInterval(signalTimer); signalTimer = null }
   await Promise.race([drainLanes(), new Promise<void>((resolve) => setTimeout(resolve, timeoutMs).unref?.())])
 }
 
@@ -2108,11 +2153,13 @@ export function editBot(
   const bot = state.bots.find((b) => b.id === id)
   if (!bot) return { error: 'not found' }
 
+  // max-hold / trailing are genuinely sniper-only concepts (a sniper holds one one-shot
+  // entry); reject them up front for anything else.
+  if ((patch.maxHoldMin !== undefined || patch.trailingPct !== undefined) && !bot.sniper)
+    return { error: 'max-hold / trailing stop are sniper-only parameters' }
+
   // ── Sniper exit thresholds (validated into a copy, applied atomically) ──────
-  const touchesSnipe =
-    patch.takeProfitPct !== undefined || patch.stopLossPct !== undefined || patch.maxHoldMin !== undefined || patch.trailingPct !== undefined
-  if (touchesSnipe) {
-    if (!bot.sniper) return { error: 'take-profit / stop-loss / max-hold are sniper-only parameters' }
+  if (bot.sniper) {
     const next: SniperConfig = { ...bot.sniper }
     if (patch.takeProfitPct !== undefined) {
       const v = Number(patch.takeProfitPct)
@@ -2138,6 +2185,23 @@ export function editBot(
       }
     }
     bot.sniper = next
+  } else if (patch.takeProfitPct !== undefined || patch.stopLossPct !== undefined) {
+    // ── Strategy / AI exit overrides — replace the risk-tier TP/SL (validated, atomic) ──
+    // Copy bots mirror the wallet and carry their OWN exit overrides in `copy`, edited via
+    // the copy setup — so they don't use the strategy-override path.
+    if (bot.copy) return { error: 'copy bots set their exits in the copy configuration' }
+    const next: NonNullable<Bot['overrides']> = { ...bot.overrides }
+    if (patch.takeProfitPct !== undefined) {
+      const v = Number(patch.takeProfitPct)
+      if (!(v > 0) || v > 1000) return { error: 'take-profit must be between 0 and 1000%' }
+      next.takeProfitPct = v
+    }
+    if (patch.stopLossPct !== undefined) {
+      const v = Number(patch.stopLossPct)
+      if (!(v > 0) || v > 100) return { error: 'stop-loss must be between 0 and 100%' }
+      next.stopLossPct = v
+    }
+    bot.overrides = next
   }
 
   // ── Budget (top-up adds working cash; reduce pulls back only free cash) ─────
@@ -2150,9 +2214,16 @@ export function editBot(
     bot.cashUsd = Math.max(0, bot.cashUsd + delta) // capital injection / withdrawal of free cash
   }
 
+  const ov = bot.overrides
   log(
     bot,
-    `Parameters updated${bot.sniper ? ` — TP +${bot.sniper.takeProfitPct}% / SL −${bot.sniper.stopLossPct}% / max ${bot.sniper.maxHoldMin}m${bot.sniper.trailingPct ? ` / trail ${bot.sniper.trailingPct}%` : ''}` : ''} · budget $${bot.budgetUsd}`,
+    `Parameters updated${
+      bot.sniper
+        ? ` — TP +${bot.sniper.takeProfitPct}% / SL −${bot.sniper.stopLossPct}% / max ${bot.sniper.maxHoldMin}m${bot.sniper.trailingPct ? ` / trail ${bot.sniper.trailingPct}%` : ''}`
+        : ov && (ov.takeProfitPct != null || ov.stopLossPct != null)
+          ? ` — TP ${ov.takeProfitPct != null ? `+${ov.takeProfitPct}%` : 'tier'} / SL ${ov.stopLossPct != null ? `−${ov.stopLossPct}%` : 'tier'}`
+          : ''
+    } · budget $${bot.budgetUsd}`,
   )
   flushNow()
   return bot

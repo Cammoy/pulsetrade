@@ -6,11 +6,11 @@ import { useStore } from '../store'
 
 describe('BottomNav (mobile)', () => {
   const setView = vi.fn()
-  const openWizard = vi.fn()
+  const openNewBot = vi.fn()
   const openMore = vi.fn()
   beforeEach(() => {
-    setView.mockReset(); openWizard.mockReset(); openMore.mockReset()
-    useStore.setState({ view: 'home', moreOpen: false, setView, openWizard, openMore })
+    setView.mockReset(); openNewBot.mockReset(); openMore.mockReset()
+    useStore.setState({ view: 'home', moreOpen: false, setView, openNewBot, openMore })
   })
 
   test('renders the tabs + center New-bot action and marks the active view', () => {
@@ -21,13 +21,13 @@ describe('BottomNav (mobile)', () => {
     expect(screen.getByRole('button', { name: 'Market' })).not.toHaveAttribute('aria-current')
   })
 
-  test('tabs route, + opens the wizard, More opens the sheet', async () => {
+  test('tabs route, + opens the New-bot hub, More opens the sheet', async () => {
     const user = userEvent.setup()
     render(<BottomNav />)
     await user.click(screen.getByRole('button', { name: 'Market' }))
     expect(setView).toHaveBeenCalledWith('market')
     await user.click(screen.getByRole('button', { name: 'New bot' }))
-    expect(openWizard).toHaveBeenCalledWith(true)
+    expect(openNewBot).toHaveBeenCalledWith(true)
     await user.click(screen.getByRole('button', { name: 'More' }))
     expect(openMore).toHaveBeenCalledWith(true)
   })

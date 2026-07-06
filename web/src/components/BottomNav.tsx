@@ -25,12 +25,12 @@ const ICONS: Record<string, ReactNode> = {
 }
 
 export default function BottomNav() {
-  const { view, setView, openWizard, openMore, moreOpen } = useStore(
-    useShallow((s) => ({ view: s.view, setView: s.setView, openWizard: s.openWizard, openMore: s.openMore, moreOpen: s.moreOpen })),
+  const { view, setView, openNewBot, openMore, moreOpen } = useStore(
+    useShallow((s) => ({ view: s.view, setView: s.setView, openNewBot: s.openNewBot, openMore: s.openMore, moreOpen: s.moreOpen })),
   )
 
-  // Smart Money + Copy Trading live in the More sheet, so "More" reads active on those views too.
-  const activeKey = moreOpen ? 'more' : view === 'smart' || view === 'copy' ? 'more' : view
+  // Signals + Smart Money + Copy Trading live in the More sheet, so "More" reads active on those views too.
+  const activeKey = moreOpen ? 'more' : view === 'smart' || view === 'copy' || view === 'signals' || view === 'trade' ? 'more' : view
   // A tab: the icon sits in a rounded "squircle" that fills with the accent when active,
   // with a matching tinted label below (inactive = muted).
   const Tab = ({ id, label, onClick }: { id: string; label: string; onClick: () => void }) => {
@@ -68,7 +68,7 @@ export default function BottomNav() {
           <Tab id="portfolio" label="Wallet" onClick={() => setView('portfolio')} />
           {/* center "New bot" action — a vibrant squircle with a soft glow */}
           <button
-            onClick={() => openWizard(true)}
+            onClick={() => openNewBot(true)}
             aria-label="New bot"
             className="tap relative z-10 mx-0.5 flex h-14 w-14 shrink-0 items-center justify-center rounded-[20px] bg-gradient-to-br from-fuchsia-500 via-violet-500 to-indigo-500 text-[var(--ink)] shadow-[0_8px_22px_-2px_rgba(139,92,246,0.65)] transition-transform active:scale-90"
           >
@@ -84,15 +84,15 @@ export default function BottomNav() {
 }
 
 function MoreSheet() {
-  const { openMore, setView, smartActive, copyActive } = useStore(
-    useShallow((s) => ({ openMore: s.openMore, setView: s.setView, smartActive: s.view === 'smart', copyActive: s.view === 'copy' })),
+  const { openMore, setView, tradeActive, signalsActive, smartActive, copyActive } = useStore(
+    useShallow((s) => ({ openMore: s.openMore, setView: s.setView, tradeActive: s.view === 'trade', signalsActive: s.view === 'signals', smartActive: s.view === 'smart', copyActive: s.view === 'copy' })),
   )
   useModal(() => openMore(false))
   const run = (action: ToolAction) => () => {
     openMore(false)
     ;(useStore.getState()[action] as (o: boolean) => void)(true)
   }
-  const go = (v: 'smart' | 'copy') => () => {
+  const go = (v: 'trade' | 'signals' | 'smart' | 'copy') => () => {
     openMore(false)
     setView(v)
   }
@@ -101,7 +101,33 @@ function MoreSheet() {
       <div className="animate-sheet pb-safe w-full max-w-md rounded-t-3xl border-t border-white/10 bg-[var(--menu)] p-4" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/20" />
 
-        {/* Smart Money + Copy Trading — promoted to the top of the sheet (primary views). */}
+        {/* Trade + Signals + Smart Money + Copy Trading — promoted to the top of the sheet (primary views). */}
+        <button
+          onClick={go('trade')}
+          className={`mb-2 flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors ${
+            tradeActive ? 'border-indigo-400/40 bg-indigo-500/[0.12]' : 'border-white/10 bg-white/[0.04] active:bg-white/[0.08]'
+          }`}
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.06] text-xl">💱</span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-100">Trade</span>
+            <span className="block truncate text-[11px] text-slate-500">Chart, perps, limit orders & alerts in one place</span>
+          </span>
+          <span className="ml-auto text-slate-500">›</span>
+        </button>
+        <button
+          onClick={go('signals')}
+          className={`mb-2 flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors ${
+            signalsActive ? 'border-indigo-400/40 bg-indigo-500/[0.12]' : 'border-white/10 bg-white/[0.04] active:bg-white/[0.08]'
+          }`}
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.06] text-xl">📡</span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-slate-100">Signals</span>
+            <span className="block truncate text-[11px] text-slate-500">AI-validated trade calls with entry, TP/SL & accuracy</span>
+          </span>
+          <span className="ml-auto text-slate-500">›</span>
+        </button>
         <button
           onClick={go('smart')}
           className={`mb-2 flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors ${

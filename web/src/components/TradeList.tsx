@@ -19,14 +19,23 @@ export default function TradeList() {
 
   return (
     <section className="glass overflow-hidden">
-      <button
-        className="flex w-full cursor-pointer items-center gap-2 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
-        onClick={toggleTrades}
-      >
-        <span className="text-sm font-semibold text-white">Trade history</span>
-        <span className="chip bg-white/[0.06] text-slate-400">{scoped.length}</span>
-        <span className="ml-auto text-xs text-slate-500">{showTrades ? '▲ hide' : '▼ show'}</span>
-      </button>
+      <div className="flex items-center gap-2 px-4 py-3">
+        <button className="flex flex-1 cursor-pointer items-center gap-2 text-left" onClick={toggleTrades}>
+          <span className="text-sm font-semibold text-white">Trade history</span>
+          <span className="chip bg-white/[0.06] text-slate-400">{scoped.length}</span>
+          <span className="ml-auto text-xs text-slate-500">{showTrades ? '▲ hide' : '▼ show'}</span>
+        </button>
+        {scoped.length > 0 && (
+          <a
+            href={`/api/export/trades.csv?mode=${mode}`}
+            download
+            title={`Download ${mode} trade history as CSV (for accounting / taxes)`}
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-slate-400 transition-colors hover:bg-white/[0.06] hover:text-slate-200"
+          >
+            ⤓ CSV
+          </a>
+        )}
+      </div>
 
       {showTrades && (
         <div>

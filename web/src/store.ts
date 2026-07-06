@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import type { ReactNode } from 'react'
-import type { AutoSniperState, Bot, Follow, Meta, MonthlyPnl, SwapRecord, Tournament, Trade } from './types'
+import type { AutoSniperState, Bot, Follow, LimitOrder, LimitOrderDraft, Meta, MonthlyPnl, PerpDraft, PerpsPayload, PriceAlert, SignalsPayload, SwapRecord, Tournament, Trade, TradeSignal, TrackedRequest } from './types'
+
+/** Body for POST /api/alerts. */
+export type AlertDraft = { cg: string; symbol: string; name?: string; kind: 'above' | 'below' | 'move'; value: number; note?: string }
 import { getStoredTheme, setTheme as applyThemePref, type ThemePref } from './theme'
 
 export interface Toast {
@@ -41,6 +44,15 @@ interface AppState {
   tournaments: Tournament[]
   follows: Follow[]
   swaps: SwapRecord[]
+  /** Advisory signal channel: live + closed signals plus forward-test stats. Hydrated
+   *  from /api/signals at boot, kept fresh by the WS `signals`/`snapshot` frames. */
+  signals: SignalsPayload
+  /** Price alerts — hydrated from /api/alerts at boot, kept fresh by WS frames. */
+  alerts: PriceAlert[]
+  /** Paper perps positions (open + closed + stats) — hydrated from /api/perps, fresh via WS. */
+  perps: PerpsPayload
+  /** Limit (conditional) orders — hydrated from /api/limit-orders, fresh via WS. */
+  limitOrders: LimitOrder[]
   prices: Record<string, number>
   /** Live circuit-breaker state from the WS snapshot (null until the first frame —
    *  consumers fall back to the boot-time meta.live.breaker). Kept fresh so the HALTED
@@ -59,11 +71,15 @@ interface AppState {
   aiOpen: boolean
   tournamentOpen: boolean
   wizardOpen: boolean
+  newBotOpen: boolean // the "+ New bot" hub — a chooser that routes to wizard/ai/finder/sniper/tournament
   moreOpen: boolean
-  view: 'home' | 'market' | 'smart' | 'copy' | 'portfolio' | 'docs'
+  view: 'home' | 'market' | 'smart' | 'copy' | 'signals' | 'trade' | 'portfolio' | 'docs'
   /** Which Portfolio sub-tab is active — lifted into the store so other surfaces
    *  (e.g. the "Staking" app entry) can deep-link straight to it. */
-  portfolioTab: 'holdings' | 'wallet' | 'staking' | 'withdraw'
+  portfolioTab: 'holdings' | 'wallet' | 'staking' | 'earn' | 'withdraw'
+  /** A coin to focus in the Trade channel — set by other surfaces (e.g. Market) to hand a
+   *  coin off to the terminal; the Trade view consumes it then clears it. */
+  tradeFocus: { symbol: string; name: string; cg: string } | null
   theme: ThemePref
   setTheme(theme: ThemePref): void
   selectedBotId: string | null
@@ -76,6 +92,7 @@ interface AppState {
   refresh(): Promise<void>
   toggleTrades(): void
   openWizard(open: boolean): void
+  openNewBot(open: boolean): void
   openFinder(open: boolean): void
   openSniper(open: boolean): void
   openSniperAuto(): void // open the Sniper modal straight to the Auto-Sniper tab
@@ -87,8 +104,11 @@ interface AppState {
   openAi(open: boolean): void
   openTournament(open: boolean): void
   openMore(open: boolean): void
-  setView(view: 'home' | 'market' | 'smart' | 'copy' | 'portfolio' | 'docs'): void
-  setPortfolioTab(tab: 'holdings' | 'wallet' | 'staking' | 'withdraw'): void
+  setView(view: 'home' | 'market' | 'smart' | 'copy' | 'signals' | 'trade' | 'portfolio' | 'docs'): void
+  /** Focus a coin in the Trade channel and switch to it (used by Market's "Trade" action). */
+  openTradeCoin(coin: { symbol: string; name: string; cg: string }): void
+  clearTradeFocus(): void
+  setPortfolioTab(tab: 'holdings' | 'wallet' | 'staking' | 'earn' | 'withdraw'): void
   selectBot(id: string | null): void
   createBot(payload: object): Promise<{ error?: string; id?: string }>
   control(id: string, action: 'pause' | 'resume' | 'stop'): Promise<void>
@@ -96,6 +116,23 @@ interface AppState {
   editBot(id: string, patch: { takeProfitPct?: number; stopLossPct?: number; maxHoldMin?: number; trailingPct?: number | null; budgetUsd?: number }): Promise<{ error?: string }>
   remove(id: string): Promise<void>
   setMode(mode: 'paper' | 'live'): Promise<{ error?: string }>
+  /** Price-alert actions. */
+  addAlert(draft: AlertDraft): Promise<{ error?: string }>
+  deleteAlert(id: string): Promise<void>
+  rearmAlert(id: string): Promise<{ error?: string }>
+  toggleAlert(id: string, enabled: boolean): Promise<void>
+  /** Paper perps actions. */
+  openPerp(draft: PerpDraft): Promise<{ error?: string }>
+  closePerp(id: string): Promise<{ error?: string }>
+  editPerpStops(id: string, patch: { stopLoss?: number | null; takeProfit?: number | null }): Promise<{ error?: string }>
+  dismissPerp(id: string): Promise<void>
+  /** Limit-order actions. */
+  addLimitOrder(draft: LimitOrderDraft): Promise<{ error?: string }>
+  cancelLimitOrder(id: string): Promise<void>
+  /** Create / re-configure / dismiss an operator-tracked trade (the signal-ticket flow). */
+  trackTrade(payload: TrackedRequest): Promise<{ error?: string }>
+  updateTracked(id: string, patch: Partial<TrackedRequest>): Promise<{ error?: string }>
+  closeTracked(id: string): Promise<void>
 }
 
 /** Shape of GET /api/state — shared by init() and refresh(). */
@@ -172,6 +209,10 @@ export const useStore = create<AppState>((set, get) => ({
   autoSniper: null,
   tournaments: [],
   follows: [],
+  signals: { active: [], history: [], tracked: [], radar: [], stats: { closed: 0, wins: 0, losses: 0, winRatePct: null, avgR: null, totalR: 0, tp1HitRatePct: null, bestR: null, worstR: null, active: 0 }, enabled: false, needsAi: true, aiThrottled: false, generatedAt: null },
+  alerts: [],
+  perps: { open: [], closed: [], stats: { open: 0, closed: 0, wins: 0, losses: 0, winRatePct: null, realizedPnlUsd: 0, openMarginUsd: 0 }, maxLeverage: 50, liveEnabled: false },
+  limitOrders: [],
   prices: {},
   breaker: null,
   wsOk: false,
@@ -187,9 +228,11 @@ export const useStore = create<AppState>((set, get) => ({
   aiOpen: false,
   tournamentOpen: false,
   wizardOpen: false,
+  newBotOpen: false,
   moreOpen: false,
   view: 'home',
   portfolioTab: 'holdings',
+  tradeFocus: null,
   theme: getStoredTheme(),
   selectedBotId: null,
   lastTradeId: null,
@@ -217,11 +260,15 @@ export const useStore = create<AppState>((set, get) => ({
     // so we never fire two boot round-trips or open two sockets.
     if (initPromise) return initPromise
     initPromise = (async () => {
-      const [meta, st] = await Promise.all([
+      const [meta, st, signals, alerts, perps, limits] = await Promise.all([
         jget<Meta>('/api/meta'),
         jget<StatePayload>('/api/state'),
+        jget<SignalsPayload>('/api/signals').catch(() => null), // optional — channel may be off
+        jget<{ alerts: PriceAlert[] }>('/api/alerts').catch(() => null),
+        jget<PerpsPayload>('/api/perps').catch(() => null),
+        jget<{ orders: LimitOrder[] }>('/api/limit-orders').catch(() => null),
       ])
-      set({ meta, ...normalizeState(st) })
+      set({ meta, ...normalizeState(st), ...(signals ? { signals } : {}), ...(alerts ? { alerts: alerts.alerts } : {}), ...(perps ? { perps } : {}), ...(limits ? { limitOrders: limits.orders } : {}) })
       connectWs()
     })()
     try {
@@ -239,6 +286,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   toggleTrades: () => set((s) => ({ showTrades: !s.showTrades })),
   openWizard: (wizardOpen) => set({ wizardOpen }),
+  openNewBot: (newBotOpen) => set({ newBotOpen }),
   openFinder: (finderOpen) => set({ finderOpen }),
   openSniper: (sniperOpen) => set({ sniperOpen }),
   openSniperAuto: () => set({ sniperOpen: true, sniperTab: 'auto' }),
@@ -253,6 +301,8 @@ export const useStore = create<AppState>((set, get) => ({
   openTournament: (tournamentOpen) => set({ tournamentOpen }),
   openMore: (moreOpen) => set({ moreOpen }),
   setView: (view) => set({ view }),
+  openTradeCoin: (coin) => set({ tradeFocus: coin, view: 'trade' }),
+  clearTradeFocus: () => set({ tradeFocus: null }),
   setPortfolioTab: (portfolioTab) => set({ portfolioTab }),
   setTheme: (theme) => {
     applyThemePref(theme)
@@ -337,6 +387,110 @@ export const useStore = create<AppState>((set, get) => ({
     set({ mode })
     return {}
   },
+
+  async trackTrade(payload) {
+    // The WS `signals` frame delivers the authoritative tracked list; here we just fire
+    // and surface any validation error.
+    const out = await jpost<{ trade?: unknown; error?: string }>('/api/signals/track', payload)
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async updateTracked(id, patch) {
+    const out = await jpost<{ trade?: unknown; error?: string }>(`/api/signals/track/${id}`, patch, 'PATCH')
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async closeTracked(id) {
+    // Optimistically drop it; the WS frame reconciles.
+    const prev = get().signals
+    set({ signals: { ...prev, tracked: prev.tracked.filter((t) => t.id !== id) } })
+    const out = await jpost<{ ok?: boolean; error?: string }>(`/api/signals/track/${id}`, undefined, 'DELETE')
+    if (out.error) {
+      set({ signals: prev })
+      get().notify('Could not remove the trade', 'error')
+    }
+  },
+
+  // ── Price alerts (the WS `alerts` frame is authoritative; these fire + surface errors) ──
+  async addAlert(draft) {
+    const out = await jpost<{ alert?: unknown; error?: string }>('/api/alerts', draft)
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async deleteAlert(id) {
+    const prev = get().alerts
+    set({ alerts: prev.filter((a) => a.id !== id) }) // optimistic; WS reconciles
+    const out = await jpost<{ ok?: boolean; error?: string }>(`/api/alerts/${id}`, undefined, 'DELETE')
+    if (out.error) {
+      set({ alerts: prev })
+      get().notify('Could not remove the alert', 'error')
+    }
+  },
+
+  async rearmAlert(id) {
+    const out = await jpost<{ alert?: unknown; error?: string }>(`/api/alerts/${id}/rearm`)
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async toggleAlert(id, enabled) {
+    const prev = get().alerts
+    set({ alerts: prev.map((a) => (a.id === id ? { ...a, enabled } : a)) }) // optimistic
+    const out = await jpost<{ error?: string }>(`/api/alerts/${id}`, { enabled }, 'PATCH')
+    if (out.error) {
+      set({ alerts: prev })
+      get().notify('Could not update the alert', 'error')
+    }
+  },
+
+  // ── Paper perps (the WS `perps` frame is authoritative; these fire + surface errors) ──
+  async openPerp(draft) {
+    const out = await jpost<{ position?: unknown; error?: string }>('/api/perps', draft)
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async closePerp(id) {
+    const out = await jpost<{ position?: unknown; error?: string }>(`/api/perps/${id}/close`)
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async editPerpStops(id, patch) {
+    const out = await jpost<{ position?: unknown; error?: string }>(`/api/perps/${id}`, patch, 'PATCH')
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async dismissPerp(id) {
+    const prev = get().perps
+    set({ perps: { ...prev, closed: prev.closed.filter((p) => p.id !== id) } }) // optimistic
+    const out = await jpost<{ ok?: boolean; error?: string }>(`/api/perps/${id}`, undefined, 'DELETE')
+    if (out.error) {
+      set({ perps: prev })
+      get().notify('Could not dismiss the position', 'error')
+    }
+  },
+
+  // ── Limit orders (the WS `limit-orders` frame is authoritative) ──
+  async addLimitOrder(draft) {
+    const out = await jpost<{ order?: unknown; error?: string }>('/api/limit-orders', draft)
+    if (out.error) get().notify(out.error, 'error')
+    return { error: out.error }
+  },
+
+  async cancelLimitOrder(id) {
+    const prev = get().limitOrders
+    set({ limitOrders: prev.filter((o) => o.id !== id) }) // optimistic (cancel or dismiss)
+    const out = await jpost<{ ok?: boolean; error?: string }>(`/api/limit-orders/${id}`, undefined, 'DELETE')
+    if (out.error) {
+      set({ limitOrders: prev })
+      get().notify('Could not update the order', 'error')
+    }
+  },
 }))
 
 let ws: WebSocket | null = null
@@ -387,6 +541,15 @@ export function handleWsMessage(raw: string) {
         autoSniper: msg.autoSniper ?? null,
         tournaments: msg.tournaments ?? [],
         follows: msg.follows ?? [],
+        // The snapshot carries the live slice (active + stats); history is preserved
+        // from the boot fetch / the dedicated `signals` frame.
+        ...(msg.signals
+          ? { signals: { ...useStore.getState().signals, active: msg.signals.active ?? [], tracked: msg.signals.tracked ?? useStore.getState().signals.tracked, radar: msg.signals.radar ?? useStore.getState().signals.radar, stats: msg.signals.stats ?? useStore.getState().signals.stats, enabled: !!msg.signals.enabled, needsAi: !!msg.signals.needsAi, aiThrottled: !!msg.signals.aiThrottled, generatedAt: msg.signals.generatedAt ?? null } }
+          : {}),
+        ...(Array.isArray(msg.alerts) ? { alerts: msg.alerts } : {}),
+        // Perps snapshot carries open positions (live PnL) + stats; closed history is kept.
+        ...(msg.perps ? { perps: { ...useStore.getState().perps, open: msg.perps.open ?? [], stats: msg.perps.stats ?? useStore.getState().perps.stats, liveEnabled: !!msg.perps.liveEnabled } } : {}),
+        ...(Array.isArray(msg.limitOrders) ? { limitOrders: msg.limitOrders } : {}),
       })
       // Proactively alert the operator the instant the live breaker trips — the HALTED
       // badge alone is easy to miss. Fire only on the false→true edge, and never on the
@@ -408,6 +571,51 @@ export function handleWsMessage(raw: string) {
         }
         return patch
       })
+    } else if (msg.type === 'signals' && msg.payload) {
+      // Authoritative full channel payload (after a publish, close, or radar refresh).
+      // Default radar so an older/partial frame can't leave it undefined (consumers .filter it).
+      const p = msg.payload as SignalsPayload
+      useStore.setState({ signals: { ...p, radar: Array.isArray(p.radar) ? p.radar : [], tracked: Array.isArray(p.tracked) ? p.tracked : [] } })
+    } else if (msg.type === 'signal' && msg.signal?.id) {
+      // A freshly published signal — toast it (state arrives via the `signals` frame).
+      const s = msg.signal as TradeSignal
+      useStore.getState().notify(`📡 New signal — ${s.asset} ${s.direction} · ${s.confidence}% conf · R:R ${s.riskReward}`, 'info')
+    } else if ((msg.type === 'signal-update' || msg.type === 'tracked-update') && (msg.signal?.id || msg.trade?.id)) {
+      // Toast only the meaningful close transitions (targets hit / stopped / expired).
+      const s = (msg.signal ?? msg.trade) as TradeSignal
+      if (s.closedAt) {
+        const won = (s.realizedR ?? 0) >= 0
+        const verb = s.status === 'tp3' ? 'ran to TP3' : s.status === 'stopped' ? 'hit its stop' : 'expired'
+        const who = msg.type === 'tracked-update' ? 'Your trade' : s.asset
+        useStore.getState().notify(`${won ? '✅' : '🛑'} ${who} ${s.asset !== who ? s.asset + ' ' : ''}${s.direction} ${verb} — ${won ? '+' : ''}${s.realizedR}R`, won ? 'success' : 'info')
+      }
+    } else if (msg.type === 'tracked' && msg.trade?.id) {
+      const t = msg.trade as TradeSignal
+      useStore.getState().notify(`📍 Tracking ${t.asset} ${t.direction} — entry ${t.entryMid}, SL ${t.stopLoss}`, 'success')
+    } else if (msg.type === 'alerts' && Array.isArray(msg.alerts)) {
+      useStore.setState({ alerts: msg.alerts as PriceAlert[] })
+    } else if (msg.type === 'alert-trigger' && msg.alert?.id) {
+      const a = msg.alert as PriceAlert
+      const p = a.triggeredPrice ?? a.value
+      const what = a.kind === 'above' ? `crossed above $${a.value}` : a.kind === 'below' ? `dropped below $${a.value}` : `moved ${a.value}%`
+      useStore.getState().notify(`🔔 ${a.symbol} ${what} — now $${p}`, 'info')
+    } else if (msg.type === 'perps' && msg.payload) {
+      useStore.setState({ perps: msg.payload as PerpsPayload })
+    } else if (msg.type === 'perp' && msg.position?.id) {
+      const p = msg.position
+      useStore.getState().notify(`📈 Opened ${p.symbol} ${String(p.side).toUpperCase()} ${p.leverage}× (paper) @ ${p.entryPrice}`, 'success')
+    } else if (msg.type === 'perp-update' && msg.position?.id && msg.position.status === 'closed') {
+      const p = msg.position
+      const won = (p.realizedPnlUsd ?? 0) >= 0
+      const how = p.closeReason === 'liquidated' ? 'liquidated' : p.closeReason === 'tp' ? 'hit take-profit' : p.closeReason === 'stop' ? 'hit stop' : 'closed'
+      const r = p.realizedPnlUsd ?? 0
+      useStore.getState().notify(`${won ? '✅' : p.closeReason === 'liquidated' ? '💥' : '🛑'} ${p.symbol} ${String(p.side).toUpperCase()} ${how} — ${r >= 0 ? '+' : '-'}$${Math.abs(r)}`, won ? 'success' : 'info')
+    } else if (msg.type === 'limit-orders' && Array.isArray(msg.orders)) {
+      useStore.setState({ limitOrders: msg.orders as LimitOrder[] })
+    } else if (msg.type === 'limit-fill' && msg.order?.id) {
+      const o = msg.order as LimitOrder
+      if (o.status === 'filled') useStore.getState().notify(`🎯 Limit ${o.side.toUpperCase()} filled — ${o.symbol} at $${o.fillPrice}`, 'success')
+      else if (o.status === 'expired') useStore.getState().notify(`⌛ Limit ${o.side.toUpperCase()} on ${o.symbol} expired`, 'info')
     }
   } catch {
     /* ignore malformed frames */

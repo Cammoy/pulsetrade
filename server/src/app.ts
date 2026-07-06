@@ -27,6 +27,12 @@ import { getDiscovered } from './discover.js'
 import { EVM_ADDR, CG_ID, isKnownAddress } from './validators.js'
 import { smartMoneyIntelligence } from './smart-insights.js'
 import { aiReady } from './ai-trader.js'
+import { getSignalsPayload, createTracked, updateTracked, closeTracked } from './signal-engine.js'
+import { getAlertsPayload, createAlert, deleteAlert, setAlertEnabled, rearmAlert } from './alerts.js'
+import { getPerpsPayload, createPerp, closePerpById, editPerpStops, dismissPerp } from './perp-engine.js'
+import { getYields } from './earn.js'
+import { getLimitOrdersPayload, createLimitOrder, cancelLimitOrder } from './limit-orders.js'
+import { tradesToCsv } from './csv.js'
 import type { Express, Request, Response, NextFunction, RequestHandler } from 'express'
 
 /** Wrap an async route so a rejected promise becomes a clean 500 instead of an
@@ -193,6 +199,68 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
   app.get('/api/pnl/monthly', (_req, res) => {
     res.json(state.monthly)
   })
+
+  // Advisory trading-signal channel: live signals + closed history + the forward-test
+  // stats. Read-only (GET) — the channel is generated server-side, never posted to.
+  app.get('/api/signals', (_req, res) => {
+    res.json(getSignalsPayload())
+  })
+
+  // Operator-configured tracked trades: set your own entry/leverage/SL/TP and have the
+  // engine monitor them (notifying on a target/stop). These are advisory tracking only —
+  // nothing is executed on-chain — so they work in either workspace, with or without AI.
+  app.post('/api/signals/track', (req, res) => {
+    const out = createTracked(req.body ?? {})
+    res.status('error' in out ? 400 : 200).json(out)
+  })
+  app.patch('/api/signals/track/:id', (req, res) => {
+    const out = updateTracked(req.params.id, req.body ?? {})
+    res.status('error' in out ? 400 : 200).json(out)
+  })
+  app.delete('/api/signals/track/:id', (req, res) => res.json({ ok: closeTracked(req.params.id) }))
+
+  // ── Price alerts ───────────────────────────────────────────────────────────
+  app.get('/api/alerts', (_req, res) => res.json(getAlertsPayload()))
+  app.post('/api/alerts', ah(async (req, res) => {
+    const out = await createAlert(req.body ?? {})
+    res.status('error' in out ? 400 : 200).json(out)
+  }))
+  app.delete('/api/alerts/:id', (req, res) => res.json({ ok: deleteAlert(req.params.id) }))
+  app.patch('/api/alerts/:id', (req, res) => {
+    const out = setAlertEnabled(req.params.id, req.body?.enabled !== false)
+    res.status('error' in out ? 400 : 200).json(out)
+  })
+  app.post('/api/alerts/:id/rearm', ah(async (req, res) => {
+    const out = await rearmAlert(req.params.id)
+    res.status('error' in out ? 400 : 200).json(out)
+  }))
+
+  // ── Paper perps (leveraged long/short positions; live execution gated) ───────
+  app.get('/api/perps', (_req, res) => res.json(getPerpsPayload()))
+  app.post('/api/perps', ah(async (req, res) => {
+    const out = await createPerp(req.body ?? {})
+    res.status('error' in out ? 400 : 200).json(out)
+  }))
+  app.post('/api/perps/:id/close', ah(async (req, res) => {
+    const out = await closePerpById(req.params.id)
+    res.status('error' in out ? 400 : 200).json(out)
+  }))
+  app.patch('/api/perps/:id', (req, res) => {
+    const out = editPerpStops(req.params.id, req.body ?? {})
+    res.status('error' in out ? 400 : 200).json(out)
+  })
+  app.delete('/api/perps/:id', (req, res) => res.json({ ok: dismissPerp(req.params.id) }))
+
+  // ── Earn: where to park idle stablecoins (live APYs, informational) ──────────
+  app.get('/api/earn', ah(async (_req, res) => res.json(await getYields())))
+
+  // ── Limit (conditional) orders — paper fills; live execution gated ───────────
+  app.get('/api/limit-orders', (_req, res) => res.json(getLimitOrdersPayload()))
+  app.post('/api/limit-orders', ah(async (req, res) => {
+    const out = await createLimitOrder(req.body ?? {})
+    res.status('error' in out ? 400 : 200).json(out)
+  }))
+  app.delete('/api/limit-orders/:id', (req, res) => res.json({ ok: cancelLimitOrder(req.params.id) }))
 
   // ── Pre-trade risk screening ───────────────────────────────────────────────
   app.get('/api/screen/:network/:symbol', ah(async (req, res) => {
@@ -626,6 +694,19 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
   app.get('/api/trades', (req, res) => res.json({ enabled: tradeDbReady(), trades: queryTrades(tradeFilters(req.query)) }))
   app.get('/api/trades/stats', (req, res) => res.json(tradeStats(tradeFilters(req.query))))
 
+  // Trade history as a CSV download (accounting / taxes). Pulls the full SQLite ledger when
+  // available (survives in-memory trimming), else the in-memory window. Honours the same
+  // filters as /api/trades (mode, token, network, side, since/until). GET → unauthenticated read.
+  app.get('/api/export/trades.csv', (req, res) => {
+    const f = tradeFilters(req.query)
+    const rows = tradeDbReady()
+      ? queryTrades({ ...f, limit: 5000 })
+      : state.trades.filter((t) => (!f.mode || t.mode === f.mode) && (!f.token || t.token === f.token) && (!f.network || t.network === f.network) && (!f.side || t.side === f.side)).slice(-5000).reverse()
+    res.setHeader('content-type', 'text/csv; charset=utf-8')
+    res.setHeader('content-disposition', `attachment; filename="pulsetrade-trades${f.mode ? '-' + f.mode : ''}.csv"`)
+    res.send(tradesToCsv(rows))
+  })
+
   app.get('/api/market', ah(async (_req, res) => {
     const { marketOverview } = await import('./market.js')
     res.json(await marketOverview())
@@ -635,6 +716,16 @@ export function createApp(engineToken: string | undefined = process.env.ENGINE_T
     if (!CG_ID.test(req.params.cg)) return res.status(400).json({ error: 'invalid coin id' })
     const { getCandles } = await import('./prices.js')
     res.json(await getCandles(req.params.cg, Number(req.query.days) || 7))
+  }))
+
+  // OHLC candles for candlestick charting. `days` clamped to CoinGecko's supported windows
+  // (it auto-picks the candle granularity per window).
+  app.get('/api/ohlc/:cg', ah(async (req, res) => {
+    if (!CG_ID.test(req.params.cg)) return res.status(400).json({ error: 'invalid coin id' })
+    const allowed = [1, 7, 14, 30, 90, 180, 365]
+    const days = allowed.includes(Number(req.query.days)) ? Number(req.query.days) : 7
+    const { getOhlc } = await import('./prices.js')
+    res.json({ days, candles: await getOhlc(req.params.cg, days) })
   }))
 
   // Read-only wallet portfolio (native + curated tokens across EVM chains, priced).
