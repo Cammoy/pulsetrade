@@ -59,6 +59,15 @@ test('createPerp with mode:live is rejected (executor gated)', async () => {
   assert.equal(state.perps!.length, 0)
 })
 
+test('createPerp rejects a non-string symbol / malformed cgId cleanly (no 500 crash)', async () => {
+  // A raw request body with a non-string symbol previously threw at markPriceFor →
+  // symbol.toUpperCase() → HTTP 500. Now it's a clean validation error. [route-validation]
+  assert.ok('error' in (await createPerp({ symbol: {} as any, cgId: 'bitcoin', side: 'long', leverage: 5, marginUsd: 100 })))
+  assert.ok('error' in (await createPerp({ cgId: 'bitcoin', side: 'long', leverage: 5, marginUsd: 100 } as any))) // missing symbol
+  assert.ok('error' in (await createPerp({ symbol: 'btc', cgId: 'bad id!', side: 'long', leverage: 5, marginUsd: 100 }))) // malformed cgId
+  assert.equal(state.perps!.length, 0, 'nothing opened on a rejected request')
+})
+
 test('trackPerps marks open positions, accrues funding, and closes on take-profit', async () => {
   const t0 = Date.now()
   await createPerp({ symbol: 'btc', cgId: 'bitcoin', side: 'long', leverage: 10, marginUsd: 100, takeProfit: 66000, stopLoss: 54000 })
