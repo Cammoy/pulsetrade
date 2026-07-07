@@ -87,6 +87,11 @@ function trimClosed() {
 
 /** Open a paper perp at the live mark. `mode:'live'` routes to the gated live executor (throws). */
 export async function createPerp(input: OpenPerpInput): Promise<{ position: PerpPosition } | { error: string }> {
+  // Guard identity TYPES before any use: markPriceFor(input.symbol, …) calls symbol.toUpperCase()
+  // and getSpotPrices([input.cgId]) runs below — both throw a 500 on a non-string symbol/cgId from
+  // a raw request body. Mirror buildUserTrade's guards so it's a clean 400. [route-validation]
+  if (typeof input.symbol !== 'string' || !input.symbol.trim()) return { error: 'Pick a coin (symbol required)' }
+  if (typeof input.cgId !== 'string' || !/^[a-z0-9-]{1,80}$/.test(input.cgId)) return { error: 'A valid coin id is required' }
   if (openOnes().length >= MAX_OPEN) return { error: 'Too many open positions — close one first' }
   const ex = input.mode === 'live' ? liveExecutor : paperExecutor
   await refreshPerpMarkets().catch(() => {})

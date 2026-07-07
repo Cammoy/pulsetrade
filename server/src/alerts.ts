@@ -112,7 +112,8 @@ const broadcastAlerts = () => broadcast({ type: 'alerts', alerts: list() })
 /** Create an alert, validated against the coin's current price (fetched fresh). */
 export async function createAlert(input: AlertInput): Promise<{ alert: PriceAlert } | { error: string }> {
   const cg = String(input?.cg ?? '').trim().toLowerCase()
-  if (!cg) return { error: 'Pick a coin' }
+  // Validate the id FORMAT before it reaches getSpotPrices' query string (buildAlert re-checks it).
+  if (!/^[a-z0-9-]{1,80}$/.test(cg)) return { error: 'Pick a coin' }
   await getSpotPrices([cg]).catch(() => {})
   const price = spotFresh(cg) ?? 0
   const res = buildAlert(input, price, Date.now(), uid())

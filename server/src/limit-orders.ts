@@ -129,7 +129,8 @@ export const limitPriceIds = (): string[] => [...new Set(openOnes().map((o) => o
 /** Create a limit order, validated against the coin's current price (fetched fresh). */
 export async function createLimitOrder(input: LimitOrderInput): Promise<{ order: LimitOrder } | { error: string }> {
   const cg = String(input?.cg ?? '').trim().toLowerCase()
-  if (!cg) return { error: 'Pick a coin' }
+  // Validate the id FORMAT before it reaches getSpotPrices' query string (buildLimitOrder re-checks it).
+  if (!/^[a-z0-9-]{1,80}$/.test(cg)) return { error: 'Pick a coin' }
   if (openOnes().length >= ORDER_CAP) return { error: 'Too many open orders — cancel one first' }
   await getSpotPrices([cg]).catch(() => {})
   const price = spotFresh(cg) ?? 0
